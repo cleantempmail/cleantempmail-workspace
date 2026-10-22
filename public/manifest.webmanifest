@@ -1,0 +1,13 @@
+{
+  "name": "CleanTempMail Workspace",
+  "short_name": "Workspace",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2f7bff",
+  "icons": [
+    { "src": "/brand/apple-touch-icon.png?v=3", "sizes": "180x180", "type": "image/png" },
+    { "src": "/brand/icon-512.png?v=3", "sizes": "512x512", "type": "image/png" },
+    { "src": "/brand/logo.svg?v=3", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

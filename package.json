@@ -1,0 +1,24 @@
+{
+  "name": "cleantempmail-workspace",
+  "version": "1.0.0",
+  "description": "Self-hosted multi-domain mailbox on Cloudflare Workers (Email Routing + Email Sending / Resend)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && wrangler d1 migrations apply cf-mailbox --remote",
+    "update": "wrangler d1 migrations apply cf-mailbox --remote && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply cf-mailbox --local",
+    "typecheck": "tsc"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "hono": "^4.13.13",
+    "postal-mime": "^4.1.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
+  },
+  "private": true
+}

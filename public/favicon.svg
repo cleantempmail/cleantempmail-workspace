@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CleanTempMail Workspace">
+  <defs>
+    <linearGradient id="g" x1="8" y1="14" x2="56" y2="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6157ff"/>
+      <stop offset=".5" stop-color="#2f7bff"/>
+      <stop offset="1" stop-color="#14c8ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#ffffff"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="15.25" fill="none" stroke="#e1e6f0" stroke-width="1.5"/>
+  <rect x="10" y="16.5" width="44" height="31" rx="8.5" fill="none" stroke="url(#g)" stroke-width="4.4"/>
+  <path d="M16 23 23.8 33.6 32 25.8 40.2 33.6 48 23" fill="none" stroke="url(#g)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

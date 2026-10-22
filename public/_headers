@@ -1,0 +1,10 @@
+# 主页面的安全头：只允许本站脚本（阻止邮件内容注入的脚本与内联事件），邮件正文在独立的沙箱 iframe 中显示
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Cross-Origin-Opener-Policy: same-origin
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/brand/*
+  Cache-Control: public, max-age=86400

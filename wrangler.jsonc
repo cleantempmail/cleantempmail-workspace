@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cf-mailbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // 自定义域名（Cloudflare 自动创建 DNS 记录和证书）；改成你自己的域名
+  "routes": [{ "pattern": "web.cleantempmail.com", "custom_domain": true }],
+  // 停用 *.workers.dev 地址和预览地址，只通过自定义域名访问
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "cf-mailbox", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "MAIL", "bucket_name": "cf-mailbox" }],
+  // 不加限制：可以从任何已开通 Email Sending 的域名发给任意收件人
+  "send_email": [{ "name": "EMAIL" }],
+  "vars": {
+    // 必须与上面的 name 一致：catch-all 规则会把邮件投递给这个 Worker
+    "WORKER_NAME": "cf-mailbox"
+  },
+  // 每分钟：定时发送、稍后提醒、投递状态；每天 03:17（UTC）：清理垃圾箱与过期附件
+  "triggers": { "crons": ["* * * * *", "17 3 * * *"] },
+  // Workers AI：会话摘要、翻译、起草回复、可选的垃圾邮件判定
+  "ai": { "binding": "AI" },
+  "observability": { "enabled": true }
+}
