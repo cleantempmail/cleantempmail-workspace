@@ -1313,3 +1313,4 @@ html[lang="zh-CN"] :is(h1, h2, h3, .thread-subject, .list-title, .page-head h1) 
 .att-card { border-radius: 12px; }
 .att-preview { height: 112px; }
 .dc-rows { background: var(--panel-2); }
+.bar.warn i { background: linear-gradient(90deg, #f59e0b, #ef4444); }

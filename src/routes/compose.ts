@@ -5,6 +5,7 @@ import { parseRefs, storeSent, type SentAttachment, type StoredBody } from "../m
 import { SendError, sendVia, type Outgoing, type Provider } from "../providers";
 import { canUseAddress, FULL, parseScope } from "../scope";
 import { b64encode, domainOf, isEmail, now, placeholders, randomId } from "../util";
+import { blobs } from "../storage";
 
 export const compose = new Hono<AppEnv>();
 
@@ -28,7 +29,7 @@ compose.post("/uploads", async (c) => {
   if (data.byteLength > MAX_UPLOAD) return c.json({ error: `单个附件不能超过 ${MAX_UPLOAD / 1024 / 1024} MB` }, 413);
   if (!data.byteLength) return c.json({ error: "文件是空的" }, 400);
   const id = randomId(16);
-  await c.env.MAIL.put(`uploads/${id}`, data, {
+  await blobs(c.env).put(`uploads/${id}`, data, {
     httpMetadata: { contentType: type },
     customMetadata: { filename, created: String(now()), owner: c.get("session").userId },
   });
@@ -37,9 +38,9 @@ compose.post("/uploads", async (c) => {
 
 compose.delete("/uploads/:id", async (c) => {
   const key = `uploads/${c.req.param("id")}`;
-  const head = await c.env.MAIL.head(key);
+  const head = await blobs(c.env).head(key);
   if (head && head.customMetadata?.owner && head.customMetadata.owner !== c.get("session").userId) return c.json({ error: "无权删除" }, 403);
-  await c.env.MAIL.delete(key);
+  await blobs(c.env).delete(key);
   return c.json({ ok: true });
 });
 
@@ -77,7 +78,7 @@ async function deleteDraft(env: Env, id: string, owner: string, keepUploads = fa
   if (!keepUploads) {
     const atts: { uploadId?: string }[] = JSON.parse(row.data).attachments ?? [];
     const drop = atts.map((a) => a.uploadId).filter((u): u is string => Boolean(u));
-    if (drop.length) await env.MAIL.delete(drop.map((u) => `uploads/${u}`));
+    if (drop.length) await blobs(env).delete(drop.map((u) => `uploads/${u}`));
   }
   await env.DB.prepare("DELETE FROM drafts WHERE id = ?").bind(id).run();
 }
@@ -188,22 +189,22 @@ function buildReferences(ids: string[]): string {
 }
 
 async function attachmentSize(env: Env, ref: AttachmentRef): Promise<number> {
-  if ("uploadId" in ref) return (await env.MAIL.head(`uploads/${ref.uploadId}`))?.size ?? 0;
-  const bodyObj = await env.MAIL.get(`msg/${ref.messageId}/body.json`);
+  if ("uploadId" in ref) return (await blobs(env).head(`uploads/${ref.uploadId}`))?.size ?? 0;
+  const bodyObj = await blobs(env).get(`msg/${ref.messageId}/body.json`);
   const body = bodyObj ? await bodyObj.json<StoredBody>() : null;
   return body?.attachments[ref.index]?.size ?? 0;
 }
 
 async function loadAttachment(env: Env, ref: AttachmentRef): Promise<SentAttachment> {
   if ("uploadId" in ref) {
-    const obj = await env.MAIL.get(`uploads/${ref.uploadId}`);
+    const obj = await blobs(env).get(`uploads/${ref.uploadId}`);
     if (!obj) throw new HttpError(410, "附件已过期，请重新添加");
     return { filename: obj.customMetadata?.filename ?? "file", type: obj.httpMetadata?.contentType ?? "application/octet-stream", data: new Uint8Array(await obj.arrayBuffer()) };
   }
-  const bodyObj = await env.MAIL.get(`msg/${ref.messageId}/body.json`);
+  const bodyObj = await blobs(env).get(`msg/${ref.messageId}/body.json`);
   const body = bodyObj ? await bodyObj.json<StoredBody>() : null;
   const att = body?.attachments[ref.index];
-  const obj = att && (await env.MAIL.get(att.key));
+  const obj = att && (await blobs(env).get(att.key));
   if (!att || !obj) throw new HttpError(410, "原邮件的附件不存在");
   return { filename: att.filename, type: att.mimeType, data: new Uint8Array(await obj.arrayBuffer()) };
 }
@@ -340,7 +341,7 @@ export async function performSend(
     warning = "邮件已发出，但保存到「已发送」时出错";
   }
   const uploadIds = refs.flatMap((r) => ("uploadId" in r ? [r.uploadId] : []));
-  if (uploadIds.length) await env.MAIL.delete(uploadIds.map((u) => `uploads/${u}`)).catch(() => {});
+  if (uploadIds.length) await blobs(env).delete(uploadIds.map((u) => `uploads/${u}`)).catch(() => {});
   if (req.draftId) await env.DB.prepare("DELETE FROM drafts WHERE id = ? AND owner = ?").bind(req.draftId, owner).run().catch(() => {});
   return { id: stored?.id ?? null, threadId: stored?.threadId ?? threadId, warning, via };
 }

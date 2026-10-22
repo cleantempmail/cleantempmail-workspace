@@ -1,0 +1,41 @@
+# 维护免绑卡版分支（lite）：与 main 的代码完全相同，只有 wrangler.jsonc 不同——
+# 不使用 R2，邮件正文存 D1，大附件存 KV。README 里的「一键部署（免绑卡版）」按钮指向这个分支。
+name: Sync no-card (lite) branch
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lite-branch
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Merge main into lite and regenerate the config
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin lite >/dev/null 2>&1; then
+            git checkout -B lite origin/lite
+            # 冲突（只会出现在 wrangler.jsonc）以 main 为准，下面再重新生成
+            git merge --no-edit -X theirs origin/main
+          else
+            git checkout -B lite origin/main
+          fi
+          node scripts/lite-config.mjs --write
+          git add wrangler.jsonc
+          git diff --cached --quiet || git commit -m "Use no-card storage (D1 + KV) for one-click deploy"
+          git push origin lite

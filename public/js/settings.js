@@ -813,12 +813,32 @@ function memberModal(m, done) {
 }
 
 // ---------- 数据 ----------
+// 免绑卡模式：D1 / KV 的用量对照免费额度
+function liteCard(l) {
+  const bar = (used, cap, label, note) => {
+    const pct = Math.min(100, (used / cap) * 100);
+    return `<div class="usage-row"><span>${label}</span><div class="bar ${pct > 85 ? "warn" : ""}"><i style="width:${Math.max(1, pct)}%"></i></div>
+      <span class="muted small">${fmtSize(used)} / ${fmtSize(cap)}${note ? ` · ${note}` : ""}</span></div>`;
+  };
+  return `<section class="set-card">
+    <div class="set-row"><div><b>存储方式：免绑卡模式</b><span>账户没有开通 R2，邮件正文和小文件存在 D1，大附件存在 KV（都不需要绑卡）。开通 R2（免费 10 GB，需要绑卡）后可以获得更大空间。</span></div><span class="status ok">D1 + KV</span></div>
+    <div class="usage">
+      ${bar(l.d1Bytes, 500 * 1024 * 1024, l.separateDb ? "D1 存储库" : "D1 主数据库", l.separateDb ? "" : "与邮件元数据共用")}
+      ${l.hasKv ? bar(l.kvBytes, 1024 * 1024 * 1024, "KV", "大于 512 KB 的文件") : `<div class="notice warn sm">${icon("alert")}<span>没有绑定 KV：大于 512 KB 的附件会保存失败。</span></div>`}
+    </div>
+  </section>`;
+}
+
 async function data(body) {
-  const stats = await load("/storage");
+  const info = await load("/storage");
+  const stats = info.domains;
   const total = stats.reduce((a, b) => ({ n: a.n + b.n, bytes: a.bytes + b.bytes }), { n: 0, bytes: 0 });
   body.innerHTML = `
+    ${info.lite ? liteCard(info.lite) : ""}
     <section class="set-card">
-      <div class="set-row"><div><b>存储用量</b><span>邮件元数据在 D1，正文和附件在 R2，都在你自己的 Cloudflare 账户里。</span></div><span class="big-num">${fmtSize(total.bytes)}<small>${total.n} 封</small></span></div>
+      <div class="set-row"><div><b>存储用量</b><span>${
+        info.mode === "lite" ? "邮件元数据和正文在 D1，大附件在 KV" : "邮件元数据在 D1，正文和附件在 R2"
+      }，都在你自己的 Cloudflare 账户里。</span></div><span class="big-num">${fmtSize(total.bytes)}<small>${total.n} 封</small></span></div>
       <div class="usage">${stats
         .map(
           (s) => `<div class="usage-row"><span>${esc(s.domain)}</span><div class="bar"><i style="width:${total.bytes ? Math.max(2, (s.bytes / total.bytes) * 100) : 0}%"></i></div>

@@ -4,7 +4,9 @@
 
 [English](README.en.md) · [部署教程](#部署) · [更新](#更新到新版本)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+| 标准版（需开通 R2） | 免绑卡版（D1 + KV） |
+|---|---|
+| [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace) | [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace/tree/lite) |
 
 部署在你自己 Cloudflare 账户里的多域名邮箱工作台（与公开的 CleanTempMail 临时邮箱是两个独立产品）。
 
@@ -80,17 +82,21 @@
 ### 准备
 
 - 一个 Cloudflare 账户，要收信的域名已接入 Cloudflare（DNS 托管在 Cloudflare）
-- 在控制台开通一次 **R2**（有免费额度）。不开通的话部署会失败
+- 存储二选一：
+  - **标准版**：在控制台开通 **R2**（免费 10 GB，开通时需要绑卡）
+  - **免绑卡版**：不用 R2，邮件存在 D1 和 KV 里，不需要绑卡，但容量较小，见下面的[免绑卡模式](#免绑卡模式)
 - 发件服务二选一（也可以两个都配，互为备用）：
   - **Cloudflare Email Sending**：账户需要 Workers Paid（$5/月）
   - **Resend**：注册 [resend.com](https://resend.com) 并创建一个 API Key（免费版每天 100 封、每月 3000 封，最多 3 个域名）
 
 ### 方式一：一键部署
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+| 标准版（需开通 R2） | 免绑卡版（D1 + KV） |
+|---|---|
+| [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace) | [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace/tree/lite) |
 
-1. 点上面的按钮，登录 Cloudflare，按提示连接你的 GitHub（或 GitLab）账户
-2. 设置仓库名、Worker 名称和数据库 / 存储桶名称，保持默认即可，然后点部署。Cloudflare 会把代码复制一份到你的 GitHub，自动创建 D1 数据库和 R2 存储桶，完成部署和建表
+1. 账户开通了 R2 就点「标准版」，没绑卡的点「免绑卡版」。登录 Cloudflare，按提示连接你的 GitHub（或 GitLab）账户
+2. 设置仓库名、Worker 名称和数据库 / 存储桶名称，保持默认即可，然后点部署。Cloudflare 会把代码复制一份到你的 GitHub，自动创建需要的数据库和存储（标准版：D1 + R2；免绑卡版：两个 D1 + KV），完成部署和建表
 3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`。页面会一步步引导你创建 OAuth 客户端：Redirect URL 和权限都可以一键复制；Client ID、Client Secret 和推荐的 `APP_SECRET` 填到这个 Worker 的 **Settings → Runtime variables and secrets**（类型选 Secret）
 4. 刷新页面，用 Cloudflare 登录，添加域名（同下面的[第 6 步](#第-6-步登录并添加域名)）
 
@@ -100,11 +106,11 @@
 
 ```bash
 git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # 只需一次
-git pull upstream main
+git pull upstream main     # 免绑卡版改成：git pull upstream lite
 git push
 ```
 
-如果 `wrangler.jsonc` 出现冲突，保留你自己的 `name` 和 `database_id`。
+如果 `wrangler.jsonc` 出现冲突，保留你自己的 `name`、`database_id` 和 KV 的 `id`。
 
 ### 方式二：命令行部署
 
@@ -134,8 +140,10 @@ cp wrangler.local.example.jsonc wrangler.local.jsonc
 
 ```bash
 npx wrangler login     # 浏览器里授权 wrangler 访问你的账户
-npm run deploy         # 首次部署：自动创建 D1 数据库和 R2 存储桶，部署 Worker，然后建表
+npm run deploy         # 首次部署：自动创建数据库和存储，部署 Worker，然后建表
 ```
+
+部署脚本会自动判断存储方式：账户开通了 R2 就用 R2，没开通就用[免绑卡模式](#免绑卡模式)，不需要改任何配置。也可以用 `STORAGE=lite npm run deploy` 或 `STORAGE=r2 npm run deploy` 强制指定。
 
 ### 第 4 步：设置加密密钥（推荐）
 
@@ -206,6 +214,23 @@ npm install
 npm run update    # 先更新数据库结构，再部署新代码，更新过程中收发不中断
 ```
 
+### 免绑卡模式
+
+Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑卡的话，可以用免绑卡模式：不使用 R2，邮件存在 D1 和 KV 里，这两样都不需要绑卡。
+
+| 内容 | 存在哪里 |
+|---|---|
+| 邮件正文、纯文本的原始邮件、512 KB 以内的附件 | D1（单独的存储库，免费 500 MB） |
+| 更大的附件和原始邮件 | KV（免费 1 GB） |
+| 品牌头像缓存、写信时上传的附件 | 同上，按大小决定 |
+
+需要知道的限制：
+
+- **容量**：D1 存储库 500 MB 足够存几万封普通邮件；KV 的 1 GB 主要被大附件占用。用量可以在「设置 → 数据」查看，快满时会标红
+- **KV 每天最多写入 1000 次**：只有大于 512 KB 的文件会用到，普通邮件一次都不用。大附件特别多的话当天可能存不下
+- **大附件刚收到时**：KV 在全球同步需要几十秒，其他地区偶尔要稍等一会儿才能打开
+- 存储方式在第一次部署后就固定下来，之后开通了 R2 也不会自动切换（避免旧邮件读不到）。目前还不支持把已有邮件迁移到 R2
+
 ### 常见问题
 
 - **登录时提示 redirect_uri 不匹配**：OAuth 客户端的 Redirect URL 必须和访问地址完全一致，包括 `https://` 和 `/auth/callback`
@@ -221,9 +246,10 @@ npm run update    # 先更新数据库结构，再部署新代码，更新过程
 | 收件（Email Routing + Worker） | ✅（大邮件可能超出 CPU 限制，解析失败时仍会保存原文） | ✅ |
 | Cloudflare Email Sending 发给任意收件人 | ❌ | ✅（Beta，新账户每日额度较低） |
 | 通过 Resend 发件 | ✅ | ✅ |
+| 存储 | 免绑卡版：D1 + KV（不需要绑卡）；标准版：R2 免费 10 GB（需要绑卡） | 同左 |
 | Workers AI（摘要、翻译、起草、垃圾判定） | 每日免费额度 | 每日免费额度 + 按量 |
 
-R2 需要在控制台启用一次（有免费额度）。D1 免费额度每天 500 万行读取：列表与轮询都走汇总表和计数表，日常使用远低于这个量。
+标准版需要在控制台启用一次 R2（有免费额度，需要绑卡）；免绑卡版不需要。D1 免费额度每天 500 万行读取：列表与轮询都走汇总表和计数表，日常使用远低于这个量。
 
 限制：每封邮件最多 50 个收件人；发件总大小 Cloudflare 5 MiB / Resend 20 MiB；收件最大 25 MiB。
 
@@ -269,6 +295,7 @@ curl -X POST "http://localhost:8787/cdn-cgi/handler/email?from=a@gmail.com&to=hi
 src/index.ts             入口：fetch（API + 静态页）、email（收信）、scheduled（定时任务）
 src/auth.ts              Cloudflare OAuth、成员邮件登录、会话、CSRF、token 刷新
 src/provision.ts         一键配置域名、健康检查与修复
+src/storage.ts           文件存储：R2，或免绑卡模式的 D1 + KV
 src/providers.ts         发件服务：Cloudflare / Resend，判断错误是否可以切换到备用服务
 src/privacy.ts           防追踪：追踪像素识别、链接参数清理、图片隐私代理
 src/mail.ts              收信解析、会话归类、存储、彻底删除
@@ -285,6 +312,8 @@ src/routes/org.ts        地址、屏蔽名单、规则、标签、成员、推�
 public/js/               前端（原生 ES 模块，无构建步骤）
 public/sw.js             Service Worker（推送通知）
 public/brand/            logo 与图标
+scripts/deploy.mjs       部署：自动选择存储方式、先迁移数据库再部署
+scripts/lite-config.mjs  生成免绑卡版配置（.github/workflows/lite-branch.yml 用它维护 lite 分支）
 ```
 
 ## 许可证

@@ -4,12 +4,14 @@ import { auth, csrf } from "./auth";
 import { daily, everyMinute } from "./cron";
 import type { AppEnv, Env } from "./env";
 import { handleInbound } from "./mail";
-import { noteWorkerHost } from "./util";
+import { noteStorageMode, noteWorkerHost } from "./util";
 
 const app = new Hono<AppEnv>();
 app.use("/api/*", async (c, next) => {
   const p = noteWorkerHost(c.env, new URL(c.req.url).hostname);
   if (p) c.executionCtx.waitUntil(p);
+  const m = noteStorageMode(c.env);
+  if (m) c.executionCtx.waitUntil(m);
   await next();
 });
 app.use("/api/*", csrf);

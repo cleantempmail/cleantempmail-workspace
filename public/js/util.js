@@ -96,6 +96,7 @@ export function dateGroup(ts) {
 }
 
 export function fmtSize(n) {
+  if (n >= 1073741824) return (n / 1073741824).toFixed(n >= 10737418240 ? 0 : 1).replace(/\.0$/, "") + " GB";
   if (n >= 1048576) return (n / 1048576).toFixed(n >= 10485760 ? 0 : 1) + " MB";
   if (n >= 1024) return Math.round(n / 1024) + " KB";
   return n + " B";

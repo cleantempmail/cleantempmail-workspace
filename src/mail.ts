@@ -7,6 +7,7 @@ import { notifyNewMail } from "./push";
 import { indexMessage, peopleText } from "./search";
 import { refreshMailboxStats, refreshThreads, touch } from "./threads";
 import { chunk, domainOf, escapeRegExp, htmlToText, now, placeholders, randomId, sha256hex, snippetOf } from "./util";
+import { blobs } from "./storage";
 
 export interface StoredAttachment {
   filename: string;
@@ -121,7 +122,7 @@ export async function handleInbound(message: ForwardableEmailMessage, env: Env, 
   if (dup) return;
 
   const id = randomId(16);
-  await env.MAIL.put(`msg/${id}/raw.eml`, raw, { httpMetadata: { contentType: "message/rfc822" } });
+  await blobs(env).put(`msg/${id}/raw.eml`, raw, { httpMetadata: { contentType: "message/rfc822" } });
 
   // 解析失败时也要入库：用信头里的信息建一条记录，原始邮件可以下载查看
   let parsed: Email | null = null;
@@ -139,7 +140,7 @@ export async function handleInbound(message: ForwardableEmailMessage, env: Env, 
     for (const [i, a] of parsed.attachments.entries()) {
       const key = `msg/${id}/att/${i}`;
       const content = a.content as ArrayBuffer;
-      await env.MAIL.put(key, content, { httpMetadata: { contentType: a.mimeType } });
+      await blobs(env).put(key, content, { httpMetadata: { contentType: a.mimeType } });
       attachments.push({
         filename: a.filename ?? `attachment-${i + 1}`,
         mimeType: a.mimeType,
@@ -154,7 +155,7 @@ export async function handleInbound(message: ForwardableEmailMessage, env: Env, 
   } else {
     text = "（这封邮件的格式无法解析，可以在「更多」菜单中下载原始邮件查看。）";
   }
-  await env.MAIL.put(`msg/${id}/body.json`, JSON.stringify({ text, html, attachments } satisfies StoredBody), {
+  await blobs(env).put(`msg/${id}/body.json`, JSON.stringify({ text, html, attachments } satisfies StoredBody), {
     httpMetadata: { contentType: "application/json" },
   });
 
@@ -247,7 +248,7 @@ export async function handleInbound(message: ForwardableEmailMessage, env: Env, 
     .first<{ rowid: number }>();
   if (!ins) {
     // 并发重投：另一份已入库，清理本次写入的文件
-    await env.MAIL.delete([`msg/${id}/raw.eml`, `msg/${id}/body.json`, ...attachments.map((a) => a.key)]);
+    await blobs(env).delete([`msg/${id}/raw.eml`, `msg/${id}/body.json`, ...attachments.map((a) => a.key)]);
     return;
   }
 
@@ -309,11 +310,11 @@ export async function storeSent(
   const attachments: StoredAttachment[] = [];
   for (const [i, a] of m.attachments.entries()) {
     const key = `msg/${id}/att/${i}`;
-    await env.MAIL.put(key, a.data, { httpMetadata: { contentType: a.type } });
+    await blobs(env).put(key, a.data, { httpMetadata: { contentType: a.type } });
     attachments.push({ filename: a.filename, mimeType: a.type, size: a.data.byteLength, key });
   }
   const body: StoredBody = { text: m.text, html: m.html ?? null, attachments };
-  await env.MAIL.put(`msg/${id}/body.json`, JSON.stringify(body), { httpMetadata: { contentType: "application/json" } });
+  await blobs(env).put(`msg/${id}/body.json`, JSON.stringify(body), { httpMetadata: { contentType: "application/json" } });
 
   const mailbox = m.from.email.toLowerCase();
   const domain = domainOf(mailbox);
@@ -372,7 +373,7 @@ export async function purgeMessages(env: Env, ids: string[]): Promise<void> {
     for (const r of results) {
       keys.push(`msg/${r.id}/raw.eml`, `msg/${r.id}/body.json`);
       if (r.att_count === null && r.has_attachments) {
-        const listed = await env.MAIL.list({ prefix: `msg/${r.id}/att/` });
+        const listed = await blobs(env).list({ prefix: `msg/${r.id}/att/` });
         keys.push(...listed.objects.map((o) => o.key));
       } else for (let i = 0; i < (r.att_count ?? 0); i++) keys.push(`msg/${r.id}/att/${i}`);
       touched.push(r);
@@ -384,6 +385,6 @@ export async function purgeMessages(env: Env, ids: string[]): Promise<void> {
       ]);
     }
   }
-  for (const part of chunk(keys, 1000)) await env.MAIL.delete(part).catch(() => {});
+  for (const part of chunk(keys, 1000)) await blobs(env).delete(part).catch(() => {});
   await touch(env, { threads: touched.map((t) => t.thread_id), mailboxes: touched.map((t) => t.mailbox) });
 }

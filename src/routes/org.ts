@@ -9,6 +9,7 @@ import { vapidPublicKey } from "../push";
 import { canUseAddress, messageScopeSql, parseScope } from "../scope";
 import { touch } from "../threads";
 import { chunk, domainOf, isEmail, now, placeholders, randomId, sha256hex } from "../util";
+import { blobs, liteUsage, storageMode } from "../storage";
 
 export const org = new Hono<AppEnv>();
 
@@ -219,7 +220,7 @@ function runAi(env: Env, system: string, user: string, maxTokens: number): Promi
 }
 
 async function bodyText(env: Env, id: string): Promise<string> {
-  const obj = await env.MAIL.get(`msg/${id}/body.json`);
+  const obj = await blobs(env).get(`msg/${id}/body.json`);
   return obj ? ((await obj.json<StoredBody>()).text ?? "") : "";
 }
 
@@ -311,7 +312,7 @@ org.get("/export.mbox", async (c) => {
       for (const m of results) {
         const date = new Date(m.created_at * 1000);
         let raw: string;
-        const obj = m.folder === "inbox" ? await c.env.MAIL.get(`msg/${m.id}/raw.eml`) : null;
+        const obj = m.folder === "inbox" ? await blobs(c.env).get(`msg/${m.id}/raw.eml`) : null;
         if (obj) raw = await obj.text();
         else {
           // 发出的邮件没有原文：用保存的内容重建一份纯文本邮件
@@ -348,7 +349,10 @@ org.get("/storage", async (c) => {
     `SELECT domain, COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes, SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS trash,
        SUM(spam) AS spam FROM messages WHERE ${ms.sql} GROUP BY domain ORDER BY bytes DESC`,
   ).bind(...ms.args).all();
-  return c.json(results);
+  const mode = storageMode(c.env);
+  // 免绑卡模式：显示 D1 / KV 的用量与免费额度（只给管理员看）
+  const lite = mode === "lite" && s.role === "admin" ? await liteUsage(c.env) : undefined;
+  return c.json({ mode, domains: results, lite });
 });
 
 // ---------- 投递状态（GraphQL emailSendingAdaptive，需要 OAuth 勾选 analytics.read） ----------
@@ -447,7 +451,7 @@ org.get("/avatar/:domain", async (c) => {
   const base = parts.slice(-keep).join(".");
   const key = `avatars/${base}`;
   const headers = { "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'", "Cache-Control": "private, max-age=604800" };
-  const cached = await c.env.MAIL.get(key);
+  const cached = await blobs(c.env).get(key);
   if (cached) {
     if (cached.customMetadata?.missing === "1" && Number(cached.customMetadata.at ?? 0) > now() - 7 * 86400) return c.body(null, 404);
     if (cached.customMetadata?.missing !== "1") return new Response(cached.body, { headers: { ...headers, "Content-Type": cached.httpMetadata?.contentType ?? "image/png" } });
@@ -467,9 +471,9 @@ org.get("/avatar/:domain", async (c) => {
     }
   } catch {}
   if (!img) {
-    await c.env.MAIL.put(key, new Uint8Array(0), { customMetadata: { missing: "1", at: String(now()) } });
+    await blobs(c.env).put(key, new Uint8Array(0), { customMetadata: { missing: "1", at: String(now()) } });
     return c.body(null, 404);
   }
-  await c.env.MAIL.put(key, img, { httpMetadata: { contentType: type } });
+  await blobs(c.env).put(key, img, { httpMetadata: { contentType: type } });
   return new Response(img, { headers: { ...headers, "Content-Type": type } });
 });

@@ -8,6 +8,7 @@ import { protectHtml } from "../privacy";
 import { parseSearch } from "../search";
 import { backfillPending, backfillStep, touch } from "../threads";
 import { chunk, domainOf, getSetting, now, placeholders, randomId } from "../util";
+import { blobs } from "../storage";
 
 export const messages = new Hono<AppEnv>();
 
@@ -133,7 +134,7 @@ messages.get("/threads", async (c) => {
 });
 
 async function loadBody(env: Env, id: string): Promise<StoredBody> {
-  const obj = await env.MAIL.get(`msg/${id}/body.json`);
+  const obj = await blobs(env).get(`msg/${id}/body.json`);
   return obj ? obj.json<StoredBody>() : { text: "", html: null, attachments: [] };
 }
 
@@ -356,7 +357,7 @@ messages.get("/messages/:id/attachments/:n", async (c) => {
   if (!(await guard(c, id))) return c.json({ error: "附件不存在" }, 404);
   const body = await loadBody(c.env, id);
   const att = body.attachments[Number(c.req.param("n"))];
-  const obj = att && (await c.env.MAIL.get(att.key));
+  const obj = att && (await blobs(c.env).get(att.key));
   if (!obj) return c.json({ error: "附件不存在" }, 404);
   const inline = c.req.query("inline") === "1" && SAFE_INLINE.test(att.mimeType);
   const isPdf = /pdf$/i.test(att.mimeType);
@@ -375,7 +376,7 @@ messages.get("/messages/:id/attachments/:n", async (c) => {
 messages.get("/messages/:id/raw", async (c) => {
   const id = c.req.param("id");
   if (!(await guard(c, id))) return c.json({ error: "邮件不存在" }, 404);
-  const obj = await c.env.MAIL.get(`msg/${id}/raw.eml`);
+  const obj = await blobs(c.env).get(`msg/${id}/raw.eml`);
   if (!obj) return c.json({ error: "没有原始邮件（发件箱中的邮件不保存原文）" }, 404);
   return new Response(obj.body, {
     headers: { "Content-Type": "message/rfc822", "Content-Disposition": `attachment; filename="${id}.eml"`, "X-Content-Type-Options": "nosniff" },

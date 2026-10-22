@@ -2,6 +2,14 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "存储方式：免绑卡模式": "Storage: no-card mode",
+  "账户没有开通 R2，邮件正文和小文件存在 D1，大附件存在 KV（都不需要绑卡）。开通 R2（免费 10 GB，需要绑卡）后可以获得更大空间。": "R2 isn't enabled on this account, so message bodies and small files are stored in D1 and large attachments in KV (neither needs a card). Enabling R2 (10 GB free, card required) gives you more space.",
+  "D1 存储库": "D1 storage database",
+  "D1 主数据库": "D1 main database",
+  "与邮件元数据共用": "shared with message metadata",
+  "大于 512 KB 的文件": "files over 512 KB",
+  "没有绑定 KV：大于 512 KB 的附件会保存失败。": "No KV binding: attachments over 512 KB can't be saved.",
+  "邮件元数据和正文在 D1，大附件在 KV，都在你自己的 Cloudflare 账户里。": "Message metadata and bodies are stored in D1 and large attachments in KV, all in your own Cloudflare account.",
   "「弹出窗口」在右下角打开写信窗口；「在会话中」会在邮件下方直接展开写信框，可随时弹出为独立窗口": "“Pop-up window” opens the composer in the bottom-right corner; “In the conversation” opens the reply right below the email, and you can pop it out into a window at any time",
   "回复方式": "Reply style",
   "在会话中": "In the conversation",

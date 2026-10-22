@@ -174,3 +174,14 @@ export function noteWorkerHost(env: Env, host: string): Promise<unknown> | null 
 export async function workerName(env: Env): Promise<string> {
   return (await getSetting(env, "worker_name")) ?? env.WORKER_NAME;
 }
+
+// 记录本次部署使用的存储方式（只记第一次）：部署脚本据此保持存储方式不变，避免开通 R2 后旧邮件读不到
+let storageNoted = false;
+export function noteStorageMode(env: Env): Promise<unknown> | null {
+  if (storageNoted) return null;
+  storageNoted = true;
+  return env.DB.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('storage_mode', ?)")
+    .bind(env.MAIL ? "r2" : "lite")
+    .run()
+    .catch(() => {});
+}

@@ -7,6 +7,7 @@ import { refreshPendingSending } from "./provision";
 import { refreshDelivery } from "./routes/org";
 import { backfillPending, backfillStep, touch } from "./threads";
 import { getSetting, now, placeholders, setSetting } from "./util";
+import { blobs } from "./storage";
 
 export async function everyMinute(env: Env): Promise<void> {
   await runScheduled(env).catch((e) => console.error("scheduled send", e));
@@ -59,9 +60,9 @@ export async function daily(env: Env): Promise<void> {
   for (const s of scheduled.results) for (const a of JSON.parse(s.payload).attachments ?? []) if (a.uploadId) referenced.add(a.uploadId);
   let cursor: string | undefined;
   do {
-    const listed = await env.MAIL.list({ prefix: "uploads/", cursor });
+    const listed = await blobs(env).list({ prefix: "uploads/", cursor });
     const stale = listed.objects.filter((o) => o.uploaded.getTime() < Date.now() - 7 * 86400_000 && !referenced.has(o.key.slice(8))).map((o) => o.key);
-    if (stale.length) await env.MAIL.delete(stale);
+    if (stale.length) await blobs(env).delete(stale);
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
 

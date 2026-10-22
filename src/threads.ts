@@ -2,6 +2,7 @@
 import type { Env } from "./env";
 import { indexMessage, peopleText } from "./search";
 import { chunk, getSetting, now, placeholders, setSetting } from "./util";
+import { blobs } from "./storage";
 
 interface MsgMeta {
   id: string;
@@ -172,7 +173,7 @@ export async function backfillStep(env: Env, budget = 300): Promise<{ done: bool
   for (const m of results) {
     let body = m.snippet ?? "";
     try {
-      const obj = await env.MAIL.get(`msg/${m.id}/body.json`);
+      const obj = await blobs(env).get(`msg/${m.id}/body.json`);
       if (obj) body = ((await obj.json<{ text?: string }>()).text ?? body) as string;
     } catch {}
     await indexMessage(env, m.rid, { subject: m.subject ?? "", people: peopleText(m.from_name, m.from_addr, m.to_addrs, m.cc_addrs, m.mailbox), body });

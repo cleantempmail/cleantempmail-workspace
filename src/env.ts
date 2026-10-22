@@ -1,6 +1,9 @@
 export interface Env {
   DB: D1Database;
-  MAIL: R2Bucket;
+  // 文件存储：有 R2 用 R2；没有 R2（免绑卡模式）时用 BLOBS（D1，可选，默认用主库）+ KV（大文件）
+  MAIL?: R2Bucket;
+  BLOBS?: D1Database;
+  KV?: KVNamespace;
   EMAIL: SendEmail;
   ASSETS: Fetcher;
   AI?: Ai;

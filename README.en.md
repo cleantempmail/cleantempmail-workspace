@@ -4,7 +4,9 @@
 
 [中文](README.md) · [Deploy](#deploy) · [Update](#updating)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+| Standard (needs R2) | No-card (D1 + KV) |
+|---|---|
+| [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace) | [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace/tree/lite) |
 
 A self-hosted, multi-domain mailbox that runs entirely in your own Cloudflare account (a separate product from the public CleanTempMail disposable-mail service).
 
@@ -16,7 +18,7 @@ Sign in with Cloudflare, pick domains from your account, and inbound and outboun
 - **Choice of sending service**: Cloudflare Email Sending or Resend, chosen per domain, with automatic failover between them
 - **Tracking protection on by default**: tracking pixels removed, remote images loaded through a privacy proxy, tracking parameters stripped from links
 
-All data (D1 + R2) stays in your account. The UI is available in Chinese and English.
+All data (D1 + R2, or D1 + KV in no-card mode) stays in your account. The UI is available in Chinese and English.
 
 ![Inbox](docs/english.png)
 
@@ -27,17 +29,21 @@ Everything is created in your own Cloudflare account. Use **one-click deploy** (
 ### Requirements
 
 - A Cloudflare account, with the domains you want to receive mail on using Cloudflare DNS
-- **R2** enabled once in the dashboard (free tier available); deployment fails without it
+- Storage, one of:
+  - **Standard**: enable **R2** in the dashboard (10 GB free; Cloudflare asks for a card when you enable it)
+  - **No-card**: no R2; mail is stored in D1 and KV, which need no card but hold less. See [No-card mode](#no-card-mode)
 - One of the following sending services (or both, as backups for each other):
   - **Cloudflare Email Sending**: requires Workers Paid ($5/month)
   - **Resend**: sign up at [resend.com](https://resend.com) and create an API key (free plan: 100 emails/day, 3,000/month, up to 3 domains)
 
 ### Option A: one-click deploy
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+| Standard (needs R2) | No-card (D1 + KV) |
+|---|---|
+| [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace) | [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace/tree/lite) |
 
-1. Click the button, sign in to Cloudflare, and connect your GitHub (or GitLab) account when asked
-2. Set the repository name, Worker name and database / bucket names (the defaults are fine), then deploy. Cloudflare copies the code into your GitHub, creates the D1 database and R2 bucket, deploys, and runs the migrations
+1. Use **Standard** if R2 is enabled on your account, otherwise **No-card**. Sign in to Cloudflare and connect your GitHub (or GitLab) account when asked
+2. Set the repository name, Worker name and database / storage names (the defaults are fine), then deploy. Cloudflare copies the code into your GitHub, creates the databases and storage (Standard: D1 + R2; No-card: two D1 databases + KV), deploys, and runs the migrations
 3. Open the deployed address, `https://<worker-name>.<your-subdomain>.workers.dev`. It walks you through creating the OAuth client, with copy buttons for the redirect URL and scopes. Add the Client ID, Client Secret and the recommended `APP_SECRET` under the Worker's **Settings → Runtime variables and secrets** (type: Secret)
 4. Reload, sign in with Cloudflare and add a domain (same as [step 6](#6-sign-in-and-add-a-domain) below)
 
@@ -47,11 +53,11 @@ To use your own hostname: open the Worker in the dashboard → **Settings → Do
 
 ```bash
 git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # once
-git pull upstream main
+git pull upstream main     # no-card version: git pull upstream lite
 git push
 ```
 
-If `wrangler.jsonc` conflicts, keep your own `name` and `database_id`.
+If `wrangler.jsonc` conflicts, keep your own `name`, `database_id` and KV `id`.
 
 ### Option B: command line
 
@@ -81,8 +87,10 @@ You can also deploy on workers.dev first and add a custom domain later under the
 
 ```bash
 npx wrangler login     # authorize wrangler in your browser
-npm run deploy         # first deploy: creates the D1 database and R2 bucket, deploys the Worker, runs migrations
+npm run deploy         # first deploy: creates the databases and storage, deploys the Worker, runs migrations
 ```
+
+The deploy script picks the storage automatically: R2 if it's enabled on your account, otherwise [no-card mode](#no-card-mode). Force one with `STORAGE=lite npm run deploy` or `STORAGE=r2 npm run deploy`.
 
 ### 4. Set an encryption key (recommended)
 
@@ -150,6 +158,22 @@ git pull
 npm install
 npm run update    # migrates the database first, then deploys, so mail keeps flowing during the update
 ```
+
+### No-card mode
+
+Cloudflare asks for a card when you enable R2 (nothing is charged within the free tier). If you'd rather not add one, no-card mode skips R2 and stores mail in D1 and KV, which need no card.
+
+| Content | Stored in |
+|---|---|
+| Message bodies, plain-text raw messages, attachments up to 512 KB | D1 (a separate storage database, 500 MB free) |
+| Larger attachments and raw messages | KV (1 GB free) |
+
+Limits to know:
+
+- **Capacity**: 500 MB of D1 holds tens of thousands of ordinary emails; KV's 1 GB is mostly used by large attachments. Check usage under **Settings → Data**; it turns red when nearly full
+- **KV allows 1,000 writes a day**: only files over 512 KB use it, ordinary mail never does. A day with lots of large attachments may run out
+- **Fresh large attachments**: KV takes a few seconds to tens of seconds to replicate globally, so another region may need a moment before it can open one
+- The storage mode is fixed after the first deploy and won't switch automatically if you enable R2 later (so old mail stays readable). Migrating existing mail to R2 isn't supported yet
 
 ### Troubleshooting
 
