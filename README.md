@@ -20,9 +20,11 @@
 
 ![收件箱](docs/inbox.png)
 
-| 防追踪 | 备用发件 | 手机 |
-|---|---|---|
-| ![防追踪](docs/privacy.png) | ![备用发件](docs/send-fallback.png) | ![手机](docs/mobile.png) |
+| 登录页 | 防追踪 |
+|---|---|
+| ![登录页](docs/login.png) | ![防追踪](docs/privacy.png) |
+| **备用发件** | **手机** |
+| ![备用发件](docs/send-fallback.png) | ![手机](docs/mobile.png) |
 
 ## 功能
 
