@@ -9,7 +9,7 @@
     "db:local": "wrangler d1 migrations apply cf-mailbox --local",
     "typecheck": "tsc"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "hono": "^4.13.13",

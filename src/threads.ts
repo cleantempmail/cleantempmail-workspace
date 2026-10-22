@@ -120,7 +120,9 @@ export async function refreshMailboxStats(env: Env, mailboxes: string[]): Promis
         `INSERT INTO mailbox_stats (mailbox, domain, total, unread, spam, last_at)
          SELECT mailbox, domain, COUNT(*),
            SUM(CASE WHEN folder = 'inbox' AND is_read = 0 AND archived = 0 AND spam = 0 THEN 1 ELSE 0 END),
-           SUM(spam), MAX(created_at)
+           SUM(spam),
+           -- last_at：最近一封"进入收件箱"的邮件时间，前端轮询据此提示新邮件（不含已发送、垃圾邮件、被规则归档的邮件）
+           COALESCE(MAX(CASE WHEN folder = 'inbox' AND spam = 0 AND archived = 0 THEN created_at END), 0)
          FROM messages WHERE mailbox IN (${placeholders(part.length)}) AND deleted_at IS NULL GROUP BY mailbox`,
       ).bind(...part),
     ]);

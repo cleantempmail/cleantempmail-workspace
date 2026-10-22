@@ -153,3 +153,7 @@ curl -X POST "http://localhost:8787/cdn-cgi/handler/email?from=a@gmail.com&to=hi
 ```
 
 See [README.md](README.md) for the full feature list, security notes and code layout (in Chinese).
+
+## License
+
+[MIT](LICENSE)

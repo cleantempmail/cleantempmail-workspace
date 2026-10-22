@@ -254,3 +254,7 @@ public/js/               前端（原生 ES 模块，无构建步骤）
 public/sw.js             Service Worker（推送通知）
 public/brand/            logo 与图标
 ```
+
+## 许可证
+
+[MIT](LICENSE)
