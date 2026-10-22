@@ -31,7 +31,7 @@ export const VIEW_META = {
   drafts: { title: "草稿", icon: "draft" },
   archive: { title: "归档", icon: "archive" },
   spam: { title: "垃圾邮件", icon: "shieldAlert" },
-  trash: { title: "垃圾箱", icon: "trash" },
+  trash: { title: "废纸篓", icon: "trash" },
   all: { title: "全部邮件", icon: "layers" },
 };
 

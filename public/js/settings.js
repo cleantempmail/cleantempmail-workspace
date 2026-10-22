@@ -845,7 +845,7 @@ async function data(body) {
       <div class="usage">${stats
         .map(
           (s) => `<div class="usage-row"><span>${esc(s.domain)}</span><div class="bar"><i style="width:${total.bytes ? Math.max(2, (s.bytes / total.bytes) * 100) : 0}%"></i></div>
-          <span class="muted small">${fmtSize(s.bytes)} · ${s.n} 封${s.trash ? ` · 垃圾箱 ${s.trash}` : ""}${s.spam ? ` · 垃圾 ${s.spam}` : ""}</span></div>`,
+          <span class="muted small">${fmtSize(s.bytes)} · ${s.n} 封${s.trash ? ` · 废纸篓 ${s.trash}` : ""}${s.spam ? ` · 垃圾邮件 ${s.spam}` : ""}</span></div>`,
         )
         .join("")}</div>
     </section>

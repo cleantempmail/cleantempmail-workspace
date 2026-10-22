@@ -136,7 +136,7 @@ const HINTS = [
   [EN_UI ? "is:starred" : "is:星标", "星标", EN_UI ? "is:starred" : "is:星标"],
   ["before:", "某日之前", "before:2026-10-01"],
   ["after:", "某日之后", "after:2026-09-01"],
-  ["in:trash", "在垃圾箱中搜索", "in:trash"],
+  ["in:trash", "在废纸篓中搜索", "in:trash"],
 ];
 function bindSearch() {
   const search = $("#search");
@@ -383,7 +383,7 @@ function updateTitle() {
   const t = r.view === "settings" ? "设置" : r.view === "domains" ? "域名管理" : r.view === "addresses" ? "地址管理" : viewTitle();
   document.title = `${n ? `(${n}) ` : ""}${t} · CleanTempMail Workspace`;
   setFaviconBadge(n);
-  navigator.setAppBadge?.(n || undefined)?.catch?.(() => {});
+  navigator.setAppBadge?.(n)?.catch?.(() => {}); // 0 会清除角标；不传参数会显示一个圆点
 }
 
 // favicon 上显示未读数

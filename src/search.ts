@@ -63,7 +63,7 @@ export function parseSearch(q: string): ParsedSearch {
       else if (k === "has" && /^(attachment|附件|file)$/.test(v)) out.where.push("has_attachments = 1");
       else if (k === "is" && /^(unread|未读)$/.test(v)) out.where.push("folder = 'inbox' AND is_read = 0");
       else if (k === "is" && /^(starred|星标)$/.test(v)) out.where.push("starred = 1");
-      else if (k === "in" && /^(trash|垃圾箱)$/.test(v)) out.scope = "trash";
+      else if (k === "in" && /^(trash|废纸篓|垃圾箱|回收站)$/.test(v)) out.scope = "trash";
       else if (k === "in" && /^(spam|垃圾邮件)$/.test(v)) out.scope = "spam";
       else if (k === "in" && /^(all|全部)$/.test(v)) out.scope = "all";
       else if (k === "in" && /^(sent|已发送)$/.test(v)) out.folder = "sent";

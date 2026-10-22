@@ -563,7 +563,7 @@ async function messageAction(m, action) {
       const rest = store.thread.messages.filter((x) => x.id !== m.id);
       if (!rest.length) navigate(store.route.view, store.route.arg, null);
       else store.thread.messages = rest;
-      toast(action === "trash" ? "已移到垃圾箱" : action === "restore" ? "已恢复" : "已永久删除");
+      toast(action === "trash" ? "已移到废纸篓" : action === "restore" ? "已恢复" : "已永久删除");
       emit("mail:changed", { keepThread: true });
     } else {
       if (action === "star" || action === "unstar") m.starred = action === "star" ? 1 : 0;

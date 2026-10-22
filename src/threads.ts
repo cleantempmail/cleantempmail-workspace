@@ -55,7 +55,7 @@ export async function refreshThreads(env: Env, threadIds: string[]): Promise<voi
 function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStatement {
   const live = msgs.filter((m) => m.deleted_at === null);
   const trash = msgs.filter((m) => m.deleted_at !== null);
-  const scope = live.length ? live : trash; // 全部在垃圾箱时，用垃圾箱里的邮件做展示
+  const scope = live.length ? live : trash; // 全部在废纸篓时，用废纸篓里的邮件做展示
   const last = scope[scope.length - 1];
   // 会话标题用最早那封（不是退信通知）的主题，和 Gmail 一致；摘要用最新一封
   const titleMsg = scope.find((m) => !m.is_bounce && m.subject) ?? scope[0];

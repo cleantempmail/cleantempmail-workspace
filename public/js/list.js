@@ -94,7 +94,7 @@ const EMPTY = {
   drafts: ["没有草稿", "写到一半的邮件和定时发送的邮件会出现在这里。"],
   archive: ["没有归档的邮件", "归档会把邮件移出收件箱，但不会删除。"],
   spam: ["没有垃圾邮件", "被屏蔽、未通过发件人验证或被规则判定的邮件会放在这里，30 天后自动删除。"],
-  trash: ["垃圾箱是空的", "删除的邮件会在这里保留 30 天。"],
+  trash: ["废纸篓是空的", "删除的邮件会在这里保留 30 天。"],
   all: ["这里还没有邮件", ""],
   box: ["这个地址还没有邮件", ""],
   domain: ["这个域名还没有邮件", ""],
@@ -251,7 +251,7 @@ export function renderList() {
             .join("")}${L.q ? `<span class="search-chip">${icon("search")}“${esc(L.q)}”<button data-clear-q aria-label="清除搜索">${icon("x")}</button></span>` : ""}</div>`
         : ""
     }
-    ${["trash", "spam"].includes(r.view) && L.threads.length ? `<div class="notice info sm list-notice">${icon("info")}<span>${r.view === "trash" ? "垃圾箱" : "垃圾邮件"}中的邮件会在 30 天后自动永久删除。</span></div>` : ""}
+    ${["trash", "spam"].includes(r.view) && L.threads.length ? `<div class="notice info sm list-notice">${icon("info")}<span>${r.view === "trash" ? "废纸篓" : "垃圾邮件"}中的邮件会在 30 天后自动永久删除。</span></div>` : ""}
     <div class="ptr" aria-hidden="true">${icon("refresh")}</div>
     <div class="list-body" role="list" aria-label="${esc(viewTitle())}">${groups}</div>`;
   bindList(el);
@@ -535,7 +535,7 @@ export function labelEditor(anchor, tids, selected, onChange) {
 
 async function emptyFolder(view) {
   const which = view === "spam" ? "spam" : "trash";
-  if (!(await confirmDialog({ title: `清空${which === "spam" ? "垃圾邮件" : "垃圾箱"}？`, message: "里面的所有邮件将被永久删除，无法恢复。", confirmLabel: "永久删除", danger: true }))) return;
+  if (!(await confirmDialog({ title: `清空${which === "spam" ? "垃圾邮件" : "废纸篓"}？`, message: "里面的所有邮件将被永久删除，无法恢复。", confirmLabel: "永久删除", danger: true }))) return;
   const t = toast("正在删除…", { type: "loading", duration: 0 });
   let total = 0;
   try {
@@ -571,7 +571,7 @@ function removesFromView(action, view) {
 
 const UNDO = { archive: "unarchive", unarchive: "archive", trash: "restore", restore: "trash", star: "unstar", unstar: "star", read: "unread", unread: "read", spam: "notspam", notspam: "spam", snooze: "unsnooze" };
 const DONE_TEXT = {
-  archive: "已归档", unarchive: "已移回收件箱", trash: "已移到垃圾箱", restore: "已恢复", delete: "已永久删除", spam_delete: "已永久删除",
+  archive: "已归档", unarchive: "已移回收件箱", trash: "已移到废纸篓", restore: "已恢复", delete: "已永久删除", spam_delete: "已永久删除",
   read: "已标为已读", unread: "已标为未读", star: "已加星标", unstar: "已取消星标", spam: "已移到垃圾邮件", notspam: "已移回收件箱",
   snooze: "已设置稍后提醒", unsnooze: "已取消提醒", label: "已添加标签", unlabel: "已移除标签",
 };
@@ -583,7 +583,7 @@ export async function threadAction(tids, action, { silent = false, until, labelI
   const apiAction = action === "spam_delete" ? "delete" : action;
   if ((action === "delete" || action === "spam_delete") && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话将被永久删除，无法恢复。`, confirmLabel: "永久删除", danger: true }))) return;
 
-  // 垃圾邮件里的"永久删除"需要先把它们移到垃圾箱，后端只彻底删除垃圾箱中的邮件
+  // 垃圾邮件里的"永久删除"需要先把它们移到废纸篓，后端只彻底删除废纸篓中的邮件
   const removed = removesFromView(action, view);
   const before = L.threads;
   if (removed) L.threads = L.threads.filter((t) => !tids.includes(t.thread_id));
