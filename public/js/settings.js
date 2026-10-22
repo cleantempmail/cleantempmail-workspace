@@ -5,6 +5,8 @@ import { icon } from "./icons.js";
 import { createLabel } from "./list.js";
 import { disablePush, enablePush, pushSupported } from "./push-client.js";
 import { releaseResend } from "./resend.js";
+import { addPasskey, passkeySupported } from "./passkey.js";
+import { tokenPermsHtml, tokenTemplateUrl } from "./pages.js";
 import { t as tr } from "./i18n.js";
 import { emit, isAdmin, store } from "./store.js";
 import { confirmDialog, modal, toast, toastError } from "./ui.js";
@@ -52,6 +54,7 @@ const TABS = [
   ["sending", "发件服务", "send", true],
   ["delivery", "投递与退信", "activity", true],
   ["members", "团队成员", "users", true],
+  ["account", "账户与安全", "key", true],
   ["data", "数据", "database"],
   ["shortcuts", "快捷键", "keyboard"],
 ];
@@ -71,7 +74,7 @@ export async function renderSettingsPage(el, tab) {
     </div>
   </div>`;
   const body = el.querySelector(".tab-body");
-  const render = { general, identities, templates, labels, rules, spam, sending, delivery, members, data, shortcuts }[tab];
+  const render = { general, identities, templates, labels, rules, spam, sending, delivery, members, account, data, shortcuts }[tab];
   // 没有缓存时先给一个骨架，避免空白
   body.innerHTML = `<section class="set-card"><div class="set-row"><div><i class="sk w40"></i><i class="sk w70"></i></div></div><div class="set-row"><div><i class="sk w70"></i><i class="sk w90"></i></div></div></section>`;
   rerender = () => body.isConnected && render(body).catch(() => {});
@@ -860,6 +863,102 @@ async function data(body) {
     body.querySelector(".export-parts").innerHTML = info.total
       ? `<div class="set-sub"><b>${info.total} 封邮件，共 ${info.pages} 个文件</b><div class="pill-list">${Array.from({ length: info.pages }, (_, i) => `<a class="pill link" href="/api/export.mbox?${q}&page=${i}" download>${icon("download")}第 ${i * info.pageSize + 1}–${Math.min(info.total, (i + 1) * info.pageSize)} 封</a>`).join("")}</div></div>`
       : `<div class="set-empty muted">没有可导出的邮件。</div>`;
+  };
+}
+
+// ---------- 账户与安全 ----------
+async function account(body) {
+  const a = await load("/account");
+  const pk = passkeySupported();
+  body.innerHTML = `
+    <section class="set-card">
+      <div class="set-row"><div><b>管理员密码</b><span>${a.hasPassword ? "用于在登录页登录。修改后，其他设备上的登录会自动退出。" : "还没有设置密码。设置后可以不经过 Cloudflare 直接登录。"}</span></div>
+        <span class="status ${a.hasPassword ? "ok" : "off"}">${a.hasPassword ? "已设置" : "未设置"}</span></div>
+      <form class="set-sub pw-form" novalidate>
+        ${a.hasPassword ? `<input class="input" type="password" name="current" autocomplete="current-password" placeholder="当前密码" aria-label="当前密码" />` : ""}
+        <input class="input" type="password" name="next" autocomplete="new-password" placeholder="新密码（至少 10 位）" aria-label="新密码" />
+        <input class="input" type="password" name="next2" autocomplete="new-password" placeholder="再输入一次" aria-label="再输入一次新密码" />
+        <div><button class="btn primary" type="submit">${a.hasPassword ? "修改密码" : "设置密码"}</button></div>
+      </form>
+    </section>
+    <section class="set-card">
+      <div class="set-row"><div><b>通行密钥</b><span>${pk ? "用指纹、面容或设备密码登录，比密码更安全，也不怕钓鱼网站。每台设备可以分别添加。" : "这个浏览器不支持通行密钥"}</span></div>
+        ${pk ? `<button class="btn primary sm" data-add-passkey>${icon("plus")}添加通行密钥</button>` : ""}</div>
+      ${
+        a.passkeys.length
+          ? `<div class="id-list">${a.passkeys
+              .map(
+                (p) => `<div class="id-row"><span class="id-ic">${icon("key")}</span>
+              <div class="id-main"><b>${esc(p.name || "通行密钥")}</b><span class="muted small">添加于 ${fmtRelative(p.created_at)}${p.last_used_at ? ` · 最近使用 ${fmtRelative(p.last_used_at)}` : ""}</span></div>
+              <button class="icon-btn sm" data-del-passkey="${esc(p.id)}" aria-label="删除">${icon("trash")}</button></div>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
+    </section>
+    <section class="set-card">
+      <div class="set-row"><div><b>Cloudflare API 令牌</b><span>用于列出域名、配置收件和发件。只保存在你的数据库里（加密）。权限不够或令牌被撤销时，可以在这里更换。</span></div>
+        <span class="status ${a.cfToken ? "ok" : "off"}">${a.cfToken ? "已连接" : "未设置"}</span></div>
+      <form class="set-sub token-form" novalidate>
+        <input class="input" type="password" name="token" autocomplete="off" spellcheck="false" placeholder="粘贴新的 API 令牌" aria-label="API 令牌" />
+        <div class="form-inline"><button class="btn primary" type="submit">${a.cfToken ? "更换令牌" : "保存令牌"}</button>
+          <a class="btn ghost" href="${tokenTemplateUrl()}" target="_blank" rel="noopener">${icon("external")}在 Cloudflare 创建令牌</a></div>
+        <details class="perm-list"><summary>需要的权限</summary>${tokenPermsHtml()}</details>
+      </form>
+    </section>
+    <section class="set-card">
+      <div class="set-row"><div><b>Cloudflare OAuth 登录（可选）</b><span>${
+        a.oauthConfigured ? "已配置：登录页会显示「使用 Cloudflare 登录」。" : "未配置。需要的话，按 README 创建私有 OAuth 客户端并添加两个 Secret 即可。"
+      }</span></div><span class="status ${a.oauthConfigured ? "ok" : "off"}">${a.oauthConfigured ? "已配置" : "未配置"}</span></div>
+    </section>`;
+  const refresh = () => {
+    cache.delete("/account");
+    account(body);
+  };
+  const pw = body.querySelector(".pw-form");
+  pw.onsubmit = async (e) => {
+    e.preventDefault();
+    if (pw.next.value !== pw.next2.value) return toast("两次输入的密码不一致", { type: "error" });
+    try {
+      await api("/account/password", { method: "PUT", body: { current: pw.current?.value, next: pw.next.value } });
+      toast("密码已更新", { type: "success" });
+      refresh();
+    } catch (err) {
+      toastError(err);
+    }
+  };
+  body.querySelector("[data-add-passkey]")?.addEventListener("click", async () => {
+    const name = /iPhone|iPad/.test(navigator.userAgent) ? "iPhone / iPad" : /Mac/.test(navigator.userAgent) ? "Mac" : /Android/.test(navigator.userAgent) ? "Android" : /Windows/.test(navigator.userAgent) ? "Windows" : "这台设备";
+    try {
+      await addPasskey(name);
+      toast("已添加通行密钥", { type: "success" });
+      refresh();
+    } catch (err) {
+      toastError(err);
+    }
+  });
+  body.querySelectorAll("[data-del-passkey]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        if (!(await confirmDialog({ title: "删除这个通行密钥？", message: "删除后这台设备不能再用通行密钥登录。", confirmLabel: "删除", danger: true }))) return;
+        await api(`/account/passkeys/${encodeURIComponent(b.dataset.delPasskey)}`, { method: "DELETE" }).catch(toastError);
+        refresh();
+      }),
+  );
+  const tf = body.querySelector(".token-form");
+  tf.onsubmit = async (e) => {
+    e.preventDefault();
+    const t = toast("正在检查令牌…", { type: "loading", duration: 0 });
+    try {
+      const r = await api("/account/cf-token", { method: "PUT", body: { token: tf.token.value } });
+      t.close();
+      toast("令牌已更新", { type: "success" });
+      for (const w of r.warnings || []) toast(w, { type: "info", duration: 8000 });
+      refresh();
+    } catch (err) {
+      t.close();
+      toastError(err);
+    }
   };
 }
 

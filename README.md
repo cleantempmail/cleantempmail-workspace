@@ -61,7 +61,7 @@
 **投递**
 - 备用发件：主服务明确拒发（额度、未验证、服务异常）或邮件超过它的大小上限时自动改用另一个服务；超时等无法确定是否已发出的情况不切换，避免重复发送
 - 退信自动识别并关联到原邮件，已发送邮件显示「退信」及原因
-- 可选：通过 GraphQL 分析接口显示「已送达 / 被拒收」（需要 OAuth 勾选 `analytics.read`）
+- 可选：通过 GraphQL 分析接口显示「已送达 / 被拒收」（令牌需要 Analytics · Read，或 OAuth 勾选 `analytics.read`）
 - 查看并解除 Cloudflare 抑制列表
 
 **团队**
@@ -97,8 +97,8 @@
 
 1. 账户开通了 R2 就点「标准版」，没绑卡的点「免绑卡版」。登录 Cloudflare，按提示连接你的 GitHub（或 GitLab）账户
 2. 设置仓库名、Worker 名称和数据库 / 存储桶名称，保持默认即可，然后点部署。Cloudflare 会把代码复制一份到你的 GitHub，自动创建需要的数据库和存储（标准版：D1 + R2；免绑卡版：两个 D1 + KV），完成部署和建表
-3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`。页面会一步步引导你创建 OAuth 客户端：Redirect URL 和权限都可以一键复制；Client ID、Client Secret 和推荐的 `APP_SECRET` 填到这个 Worker 的 **Settings → Runtime variables and secrets**（类型选 Secret）
-4. 刷新页面，用 Cloudflare 登录，添加域名（同下面的[第 6 步](#第-6-步登录并添加域名)）
+3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`，按首次设置页的三步操作：点「在 Cloudflare 创建令牌」（权限已经预先选好）→ 把令牌粘贴回来 → 设置管理员密码。不需要创建 OAuth 客户端，也不需要填任何环境变量
+4. 完成后直接进入邮箱，添加域名（同下面的[第 5 步](#第-5-步添加域名)）
 
 想用自己的域名访问：控制台打开这个 Worker → **Settings → Domains & Routes → Add → Custom domain**。
 
@@ -145,21 +145,45 @@ npm run deploy         # 首次部署：自动创建数据库和存储，部署 
 
 部署脚本会自动判断存储方式：账户开通了 R2 就用 R2，没开通就用[免绑卡模式](#免绑卡模式)，不需要改任何配置。也可以用 `STORAGE=lite npm run deploy` 或 `STORAGE=r2 npm run deploy` 强制指定。
 
-### 第 4 步：设置加密密钥（推荐）
+### 第 4 步：完成首次设置
 
-Cloudflare 登录凭据和 Resend API Key 会加密后存进 D1。设置 `APP_SECRET` 后，加密密钥和数据分开存放：
+打开你的访问地址，首次设置页只有三步：
 
-```bash
-openssl rand -base64 32 | npx wrangler secret put APP_SECRET
-```
+1. 点「在 Cloudflare 创建令牌」：需要的权限已经预先选好。在「账户资源」里选择部署了本应用的账户，点「继续以显示摘要」→「创建令牌」，复制令牌
+2. 把令牌粘贴回来
+3. 设置管理员密码（至少 10 位）
 
-设置后不要再修改或删除它，否则已保存的凭据无法解密（需要重新登录、重新填写 Resend API Key）。
+令牌加密后只保存在你自己的数据库里，用于列出域名、配置收件和发件。只有能为部署本应用的账户创建令牌的人才能完成设置，别人无法抢先认领管理员。
 
-### 第 5 步：创建 Cloudflare 登录（OAuth 客户端）
+<details>
+<summary>令牌需要的权限（预填链接没选上时手动添加）</summary>
 
-管理员用 Cloudflare 账户登录本应用。这需要在你的账户里创建一个**私有** OAuth 客户端：只有本账户的成员能授权，不需要域名验证。
+`User Details · Read`、`Account Settings · Read`、`Workers Scripts · Read`、`Zone · Read`、`Zone Settings · Edit`、`DNS · Edit`、`Email Routing Rules · Edit`、`Email Sending · Edit`，可选 `Analytics · Read`（显示外发邮件「已送达 / 被拒收」）。账户资源选部署了本应用的账户，区域资源选所有区域。
+</details>
 
-在 Cloudflare 控制台打开 **Manage Account → OAuth clients → Create client**，按下表填写：
+登录后可以在「设置 → 账户与安全」添加通行密钥（指纹 / 面容 / 设备密码），以后一键登录。忘记密码时，在登录页点「忘记密码？」，用同一个账户的 API 令牌重设。
+
+### 第 5 步：添加域名
+
+1. 进入「域名管理 → 添加域名」，从账户里选择要收信的域名
+2. 应用会自动完成：开启 Email Routing、把 Catch-all 投递到本 Worker、开通发件服务（有 Workers Paid 用 Cloudflare，否则用 Resend）
+
+如果域名已经在用其他邮箱（例如 Google Workspace 的 MX 记录），会先提示你确认再替换，原来的记录会备份。DNS 生效通常需要几分钟。
+
+### 第 6 步（可选）
+
+- **用 Resend 发件**：「设置 → 发件服务」填写 Resend API Key，然后在域名卡片右上角 ⋮ 选择 Resend
+- **Resend 域名名额**：Resend 免费版最多 3 个域名，不论是否验证通过、本应用是否还在用都占名额。「设置 → 发件服务」可以看到用量；不常用的域名可以在菜单里选「停用 Resend 发件（释放名额）」，会从 Resend 删除并清理 DNS 记录，腾出名额给别的域名（之后重新开通会自动重新写入 DNS）。移除域名时也可以勾选同时释放
+- **备用发件**：两个服务都可用时，打开域名卡片上的「备用」开关。主服务额度用完、未验证或出错时，自动改用另一个服务发出；邮件超过 Cloudflare 的 5 MB 上限时也会自动改用 Resend
+- **团队成员**：「设置 → 团队成员」邀请同事，用邮箱登录链接登录，不需要 Cloudflare 账户
+- **推送通知**：「设置 → 通用」开启后，关掉页面也能收到新邮件通知
+- **单独的加密密钥**：令牌和 Resend API Key 默认用存在数据库里的随机密钥加密。想让密钥和数据分开存放，可以设置 `APP_SECRET`（`openssl rand -base64 32 | npx wrangler secret put APP_SECRET`），设置后不要再修改或删除
+- **用 Cloudflare 账户登录（OAuth）**：除了密码和通行密钥，还可以配置私有 OAuth 客户端，登录页会多一个「使用 Cloudflare 登录」，见下面的说明
+
+<details>
+<summary>配置 Cloudflare OAuth 登录（可选）</summary>
+
+在 Cloudflare 控制台打开 **Manage Account → OAuth clients → Create client**：
 
 | 字段 | 填写 |
 |---|---|
@@ -168,43 +192,17 @@ openssl rand -base64 32 | npx wrangler secret put APP_SECRET
 | Grant types | `Authorization Code`、`Refresh Token` |
 | Token auth method | `Client Secret Basic` |
 | Scopes | `user-details.read` `account-settings.read` `workers-scripts.metadata_read` `zone.read` `zone-settings.write` `dns.read` `dns.write` `email-routing-rule.read` `email-routing-rule.write` `email-sending.read` `email-sending.write` |
-| 可选 Scope | `analytics.read`：显示外发邮件「已送达 / 被拒收」。不勾选也能正常使用 |
+| 可选 Scope | `analytics.read` |
 
-创建后把 Client ID 和 Client Secret 保存为 Worker Secret：
-
-```bash
-npx wrangler secret put CF_OAUTH_CLIENT_ID       # 粘贴 Client ID
-npx wrangler secret put CF_OAUTH_CLIENT_SECRET   # 粘贴 Client Secret
-```
-
-也可以在控制台打开这个 Worker 的 **Settings → Runtime variables and secrets** 添加，类型选 Secret。
-
-<details>
-<summary>用脚本创建（需要一个有 OAuth Clients Write 权限的 API token）</summary>
+然后把 Client ID 和 Client Secret 保存为 Worker Secret（也可以在控制台 Worker 的 **Settings → Runtime variables and secrets** 添加）：
 
 ```bash
-CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
-  ./scripts/create-oauth-client.sh https://<你的访问地址>
+npx wrangler secret put CF_OAUTH_CLIENT_ID
+npx wrangler secret put CF_OAUTH_CLIENT_SECRET
 ```
 
-脚本会创建客户端并自动写入上面两个 Secret。
+也可以用脚本创建（需要一个有 OAuth Clients Write 权限的 API token）：`CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... ./scripts/create-oauth-client.sh https://<你的访问地址>`
 </details>
-
-### 第 6 步：登录并添加域名
-
-1. 打开你的访问地址，点「使用 Cloudflare 登录」。**第一个登录的人成为管理员**
-2. 进入「域名管理 → 添加域名」，从账户里选择要收信的域名
-3. 应用会自动完成：开启 Email Routing、把 Catch-all 投递到本 Worker、开通发件服务（有 Workers Paid 用 Cloudflare，否则用 Resend）
-
-如果域名已经在用其他邮箱（例如 Google Workspace 的 MX 记录），会先提示你确认再替换，原来的记录会备份。DNS 生效通常需要几分钟。
-
-### 第 7 步（可选）
-
-- **用 Resend 发件**：「设置 → 发件服务」填写 Resend API Key，然后在域名卡片右上角 ⋮ 选择 Resend
-- **Resend 域名名额**：Resend 免费版最多 3 个域名，不论是否验证通过、本应用是否还在用都占名额。「设置 → 发件服务」可以看到用量；不常用的域名可以在菜单里选「停用 Resend 发件（释放名额）」，会从 Resend 删除并清理 DNS 记录，腾出名额给别的域名（之后重新开通会自动重新写入 DNS）。移除域名时也可以勾选同时释放
-- **备用发件**：两个服务都可用时，打开域名卡片上的「备用」开关。主服务额度用完、未验证或出错时，自动改用另一个服务发出；邮件超过 Cloudflare 的 5 MB 上限时也会自动改用 Resend
-- **团队成员**：「设置 → 团队成员」邀请同事，用邮箱登录链接登录，不需要 Cloudflare 账户
-- **推送通知**：「设置 → 通用」开启后，关掉页面也能收到新邮件通知
 
 ### 更新到新版本
 
@@ -233,10 +231,12 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 
 ### 常见问题
 
-- **登录时提示 redirect_uri 不匹配**：OAuth 客户端的 Redirect URL 必须和访问地址完全一致，包括 `https://` 和 `/auth/callback`
+- **首次设置提示令牌无效**：令牌至少需要「Account Settings · Read」「Workers Scripts · Read」权限，并且「账户资源」要选部署了本应用的账户
+- **忘记管理员密码**：登录页点「忘记密码？」，粘贴同一个账户的 API 令牌即可重设
+- **使用 OAuth 登录时提示 redirect_uri 不匹配**：OAuth 客户端的 Redirect URL 必须和访问地址完全一致，包括 `https://` 和 `/auth/callback`
 - **收不到邮件**：在域名卡片上点「健康检查」，会逐项检查 Email Routing、MX、Catch-all、SPF、DMARC，并可以一键修复
 - **Cloudflare 发件失败**：通常是账户没有开通 Workers Paid。可以改用 Resend，或把 Resend 设为备用
-- **Resend 提示名额已满**：免费版最多 3 个域名。先释放一个不常用的域名（见第 7 步），或升级 Resend 套餐。域名多的话，开通 Workers Paid 用 Cloudflare 发件更省事：每月含 3,000 封，不限域名数
+- **Resend 提示名额已满**：免费版最多 3 个域名。先释放一个不常用的域名（见第 6 步），或升级 Resend 套餐。域名多的话，开通 Workers Paid 用 Cloudflare 发件更省事：每月含 3,000 封，不限域名数
 - **Workers AI 功能不可用**：AI 摘要、翻译、起草回复使用 Workers AI，有每日免费额度，用完后会提示稍后再试
 
 ## 套餐说明
@@ -259,6 +259,8 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 - 编辑器对粘贴内容、引用原文、草稿做白名单过滤
 - 写请求校验 `Sec-Fetch-Site` / `Origin` 并要求 `application/json`（防同主域兄弟子域的 CSRF）
 - 会话 Cookie 使用 `__Host-` 前缀；数据库只保存会话 id 的哈希
+- 管理员密码用 PBKDF2 哈希保存，登录失败按 IP 和全局限流；支持通行密钥（WebAuthn）
+- 首次设置和重设密码都要求提供能访问部署账户的 API 令牌，别人无法抢先认领管理员
 - 设置 `APP_SECRET` 后，token 与 API Key 的加密密钥和数据分开存放
 - OAuth token 刷新带条件更新，避免并发刷新互相作废
 
@@ -266,7 +268,8 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 
 | 动作 | 调用的 Cloudflare API |
 |---|---|
-| 登录 | Cloudflare OAuth（私有客户端，只有本账户成员能授权） |
+| 登录 | 管理员密码 / 通行密钥；可选 Cloudflare OAuth（私有客户端） |
+| 调用 Cloudflare API | 首次设置时粘贴的 API 令牌（加密保存）；没有令牌时用 OAuth 会话 |
 | 列出域名 | `GET /zones?account.id=…`（自动翻页） |
 | 开启收件 | 先 `POST /zones/{zone}/email/routing/dns`，成功后再删除（并备份）冲突的旧 MX |
 | Catch-all | `PUT /zones/{zone}/email/routing/rules/catch_all` → `worker: cf-mailbox`（原规则会备份，移除域名时恢复） |
@@ -293,7 +296,9 @@ curl -X POST "http://localhost:8787/cdn-cgi/handler/email?from=a@gmail.com&to=hi
 
 ```
 src/index.ts             入口：fetch（API + 静态页）、email（收信）、scheduled（定时任务）
-src/auth.ts              Cloudflare OAuth、成员邮件登录、会话、CSRF、token 刷新
+src/auth.ts              首次设置、密码 / 通行密钥 / OAuth 登录、成员邮件登录、会话、CSRF
+src/local-auth.ts        密码哈希、登录限流、通行密钥（WebAuthn）校验
+src/routes/account.ts    账户与安全：修改密码、通行密钥、更换 API 令牌
 src/provision.ts         一键配置域名、健康检查与修复
 src/storage.ts           文件存储：R2，或免绑卡模式的 D1 + KV
 src/providers.ts         发件服务：Cloudflare / Resend，判断错误是否可以切换到备用服务

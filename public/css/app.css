@@ -1314,3 +1314,22 @@ html[lang="zh-CN"] :is(h1, h2, h3, .thread-subject, .list-title, .page-head h1) 
 .att-preview { height: 112px; }
 .dc-rows { background: var(--panel-2); }
 .bar.warn i { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+
+/* ---------- 首次设置（API 令牌 + 密码）与管理员登录 ---------- */
+.setup-steps li .input { align-self: stretch; max-width: 460px; }
+.setup-steps li .input + .input { margin-top: 2px; }
+.perm-list { font-size: 13px; color: var(--muted); align-self: stretch; }
+.perm-list summary { cursor: pointer; width: fit-content; }
+.perm-list summary:hover { color: var(--text-2); }
+.perm-list .scope-list { margin-top: 8px; }
+.setup-form > .btn { margin-top: 2px; }
+.setup-advanced { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); }
+.setup-advanced > summary { cursor: pointer; font-weight: 600; font-size: 14px; color: var(--text-2); width: fit-content; }
+.setup-advanced[open] > summary { margin-bottom: 10px; }
+.admin-login { display: grid; gap: 10px; }
+.auth-card :is(.admin-login, .btn.block) + :is(.btn.block, .admin-login) { margin-top: 10px; }
+.pw-form, .token-form { display: grid; gap: 8px; }
+.pw-form > *, .token-form > * { max-width: 460px; }
+.token-form .form-inline { margin-top: 2px; padding: 0; max-width: none; }
+.auth-card .forgot { margin: 8px 0 0; }
+.reset-form .btn.sm { margin-top: 10px; }

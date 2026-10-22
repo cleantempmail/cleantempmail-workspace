@@ -1,10 +1,11 @@
 import { Hono, type Context, type Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { Cf } from "./cf";
+import { Cf, CfApiError } from "./cf";
 import type { AppEnv, Env, Session } from "./env";
 import { sendVia, type Provider } from "./providers";
 import { FULL, parseScope } from "./scope";
-import { decrypt, domainOf, encrypt, getSetting, isEmail, now, randomId, setSetting, sha256hex, workerName } from "./util";
+import { clearFailures, hashPassword, newChallenge, passwordProblem, recordFailure, tooManyAttempts, verifyAssertion, verifyPassword } from "./local-auth";
+import { decrypt, domainOf, encrypt, getSetting, getSettings, isEmail, now, randomId, setSetting, sha256hex, workerName } from "./util";
 
 const AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
@@ -156,6 +157,134 @@ auth.get("/callback", async (c) => {
   return c.redirect("/");
 });
 
+// ---------- 不依赖 OAuth 的管理员登录 ----------
+const clientIp = (c: Context<AppEnv>) => c.req.header("cf-connecting-ip") ?? "unknown";
+const rpOf = (c: Context<AppEnv>) => {
+  const u = new URL(c.req.url);
+  return { rpId: u.hostname, origin: u.origin };
+};
+
+// 首次设置：粘贴 API 令牌 + 设置管理员密码。
+// 令牌必须能看到部署了本 Worker 的账户——这就证明了操作的人是账户主人，别人无法抢先认领。
+auth.post("/setup", async (c) => {
+  const body = await c.req.json<{ token?: string; password?: string }>().catch(() => ({}) as { token?: string; password?: string });
+  if (await getSetting(c.env, "owner_user_id")) return c.json({ error: "管理员已经设置过了，请直接登录" }, 409);
+  const bad = passwordProblem(body.password);
+  if (bad) return c.json({ error: bad }, 400);
+  const token = String(body.token ?? "").trim();
+  if (!/^[\w.-]{20,}$/.test(token)) return c.json({ error: "API 令牌格式不对，请粘贴完整的令牌" }, 400);
+  const checked = await checkApiToken(c.env, token, true).catch((e: Error) => e);
+  if (checked instanceof Error) return c.json({ error: checked.message }, 400);
+  const { ownerId, email, accountId, warnings } = checked;
+  await c.env.DB.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('owner_user_id', ?)").bind(ownerId).run();
+  if ((await getSetting(c.env, "owner_user_id")) !== ownerId) return c.json({ error: "管理员已经设置过了，请直接登录" }, 409);
+  await Promise.all([
+    setSetting(c.env, "account_id", accountId),
+    setSetting(c.env, "owner_email", email),
+    setSetting(c.env, "cf_api_token", await encrypt(c.env, token)),
+    setSetting(c.env, "admin_password", await hashPassword(body.password!)),
+  ]);
+  await createSession(c, ownerId, email, null);
+  return c.json({ ok: true, warnings });
+});
+
+auth.post("/password", async (c) => {
+  const ip = clientIp(c);
+  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const { password } = await c.req.json<{ password?: string }>().catch(() => ({}) as { password?: string });
+  const st = await getSettings(c.env, ["owner_user_id", "admin_password", "owner_email"]);
+  if (!st.owner_user_id || !st.admin_password) return c.json({ error: "还没有设置管理员密码" }, 400);
+  if (!(await verifyPassword(String(password ?? ""), st.admin_password))) {
+    await recordFailure(c.env, ip);
+    return c.json({ error: "密码不正确" }, 401);
+  }
+  await clearFailures(c.env, ip);
+  await createSession(c, st.owner_user_id, st.owner_email, null);
+  return c.json({ ok: true });
+});
+
+// 忘记密码：用同一个 Cloudflare 账户的 API 令牌证明身份后重设
+auth.post("/reset", async (c) => {
+  const ip = clientIp(c);
+  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const body = await c.req.json<{ token?: string; password?: string }>().catch(() => ({}) as { token?: string; password?: string });
+  const st = await getSettings(c.env, ["owner_user_id", "owner_email", "account_id"]);
+  if (!st.owner_user_id) return c.json({ error: "还没有设置管理员，请先完成首次设置" }, 400);
+  const bad = passwordProblem(body.password);
+  if (bad) return c.json({ error: bad }, 400);
+  const token = String(body.token ?? "").trim();
+  const checked = /^[\w.-]{20,}$/.test(token) ? await checkApiToken(c.env, token, true).catch((e: Error) => e) : new Error("API 令牌格式不对，请粘贴完整的令牌");
+  if (checked instanceof Error) {
+    await recordFailure(c.env, ip);
+    return c.json({ error: checked.message }, 400);
+  }
+  if (st.account_id && checked.accountId !== st.account_id) {
+    await recordFailure(c.env, ip);
+    return c.json({ error: "这个令牌属于另一个 Cloudflare 账户" }, 400);
+  }
+  await Promise.all([setSetting(c.env, "admin_password", await hashPassword(body.password!)), setSetting(c.env, "cf_api_token", await encrypt(c.env, token))]);
+  // 旧会话全部失效
+  await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(st.owner_user_id).run();
+  await clearFailures(c.env, ip);
+  await createSession(c, st.owner_user_id, st.owner_email, null);
+  return c.json({ ok: true, warnings: checked.warnings });
+});
+
+auth.post("/passkey/begin", async (c) => {
+  const owner = await getSetting(c.env, "owner_user_id");
+  const { results } = owner ? await c.env.DB.prepare("SELECT id FROM passkeys WHERE user_id = ?").bind(owner).all<{ id: string }>() : { results: [] };
+  if (!results.length) return c.json({ error: "还没有添加通行密钥" }, 400);
+  return c.json({ challenge: await newChallenge(c.env, "login"), rpId: rpOf(c).rpId, allowCredentials: results.map((r) => r.id) });
+});
+
+auth.post("/passkey/finish", async (c) => {
+  const ip = clientIp(c);
+  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const body = await c.req.json<{ id: string; clientDataJSON: string; authenticatorData: string; signature: string }>();
+  const st = await getSettings(c.env, ["owner_user_id", "owner_email"]);
+  const row = await c.env.DB.prepare("SELECT id, user_id, public_key, alg, sign_count FROM passkeys WHERE id = ?")
+    .bind(String(body.id ?? ""))
+    .first<{ id: string; user_id: string; public_key: string; alg: number; sign_count: number }>();
+  if (!row || row.user_id !== st.owner_user_id) {
+    await recordFailure(c.env, ip);
+    return c.json({ error: "这个通行密钥不属于管理员" }, 401);
+  }
+  const { rpId, origin } = rpOf(c);
+  try {
+    const count = await verifyAssertion(c.env, body, { jwk: JSON.parse(row.public_key), alg: row.alg, signCount: row.sign_count }, rpId, origin);
+    await c.env.DB.prepare("UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ?").bind(count, now(), row.id).run();
+  } catch (e: any) {
+    await recordFailure(c.env, ip);
+    return c.json({ error: e.message }, 401);
+  }
+  await clearFailures(c.env, ip);
+  await createSession(c, row.user_id, st.owner_email, null);
+  return c.json({ ok: true });
+});
+
+// 检查 API 令牌：能找到部署了本 Worker 的账户；顺便检查读取域名的权限。
+// strict：必须真的找到本 Worker（本地开发时 Worker 可能还没部署，放宽）
+export async function checkApiToken(env: Env, token: string, strict: boolean) {
+  const cf = new Cf(token);
+  const user = await cf.user().catch(() => null);
+  const verify = await cf.get<{ id: string; status: string }>("/user/tokens/verify").catch(() => null);
+  if (verify && verify.status !== "active") throw new Error("这个令牌已停用或过期");
+  let accountId: string;
+  try {
+    accountId = await workerAccountId(env, cf, { strict: strict && env.DEV_LOGIN !== "1", cache: false });
+  } catch (e: any) {
+    throw new Error(
+      e instanceof CfApiError && (e.status === 401 || e.status === 403)
+        ? "令牌无效，或者缺少「账户设置：读取」「Workers 脚本：读取」权限"
+        : e.message,
+    );
+  }
+  const warnings: string[] = [];
+  if (!(await cf.get(`/zones?account.id=${accountId}&per_page=1`).then(() => true, () => false))) warnings.push("令牌没有「区域：读取」权限，添加域名时会失败，请在 Cloudflare 里给令牌补上");
+  const ownerId = user?.id ?? `token:${verify?.id ?? (await sha256hex(token)).slice(0, 24)}`;
+  return { ownerId, email: user?.email ?? null, accountId, warnings };
+}
+
 // ---------- 团队成员：邮件登录链接 ----------
 
 auth.post("/magic", async (c) => {
@@ -252,6 +381,7 @@ interface SessionRow {
   owner: string | null;
   m_scope: string | null;
   m_disabled: number | null;
+  api: number;
 }
 
 export async function loadSession(c: Context<AppEnv>): Promise<Session | null> {
@@ -260,6 +390,7 @@ export async function loadSession(c: Context<AppEnv>): Promise<Session | null> {
   // 会话、主人设置、成员信息一次查询取回（每个请求都要执行，必须只有一次往返）
   const row = await c.env.DB.prepare(
     `SELECT s.id, s.user_id, s.email, s.tokens, (SELECT value FROM settings WHERE key = 'owner_user_id') AS owner,
+       EXISTS (SELECT 1 FROM settings WHERE key = 'cf_api_token') AS api,
        m.scope AS m_scope, m.disabled AS m_disabled
      FROM sessions s LEFT JOIN members m ON s.user_id = 'member:' || m.id
      WHERE s.id = ? AND s.expires_at > ?`,
@@ -273,7 +404,7 @@ export async function loadSession(c: Context<AppEnv>): Promise<Session | null> {
   }
   // 管理员必须仍是主人（防止换绑后旧会话继续有效）
   if (row.owner && row.owner !== row.user_id) return null;
-  return { id: row.id, userId: row.user_id, email: row.email, role: "admin", scope: FULL, hasCfToken: Boolean(row.tokens) || devLogin(c), tokens: row.tokens };
+  return { id: row.id, userId: row.user_id, email: row.email, role: "admin", scope: FULL, hasCfToken: Boolean(row.tokens) || Boolean(row.api) || devLogin(c), tokens: row.tokens };
 }
 
 export async function requireSession(c: Context<AppEnv>, next: Next) {
@@ -327,6 +458,8 @@ export async function cfClient(c: Context<AppEnv>): Promise<Cf> {
   const s = c.get("session");
   if (s.role !== "admin") throw new ReauthError("只有管理员可以管理域名");
   if (devLogin(c) && c.env.DEV_CF_API_TOKEN) return new Cf(c.env.DEV_CF_API_TOKEN);
+  const api = await apiTokenCf(c.env);
+  if (api) return api;
   const t = await accessTokenFor(c.env, s.id);
   if (!t) throw new ReauthError();
   return new Cf(t.token);
@@ -343,8 +476,21 @@ export async function sessionTokenScope(c: Context<AppEnv>): Promise<string | nu
   }
 }
 
-// 定时任务没有请求上下文：用管理员最近一次的会话
+// 首次设置时保存的 API 令牌（不需要 OAuth）
+async function apiTokenCf(env: Env): Promise<Cf | null> {
+  const enc = await getSetting(env, "cf_api_token");
+  if (!enc) return null;
+  try {
+    return new Cf(await decrypt(env, enc));
+  } catch {
+    return null;
+  }
+}
+
+// 定时任务没有请求上下文：优先用 API 令牌，否则用管理员最近一次的 OAuth 会话
 export async function ownerCf(env: Env): Promise<{ cf: Cf; scope?: string } | null> {
+  const api = await apiTokenCf(env);
+  if (api) return { cf: api };
   const owner = await getSetting(env, "owner_user_id");
   if (!owner) return null;
   const { results } = await env.DB.prepare(
@@ -364,20 +510,20 @@ export class ReauthError extends Error {
 }
 
 // 找到部署了本 Worker 的账户：catch-all 只能投递给同账户的 Worker，发件绑定也属于该账户
-export async function workerAccountId(env: Env, cf: Cf): Promise<string> {
-  const cached = await getSetting(env, "account_id");
+export async function workerAccountId(env: Env, cf: Cf, opts: { strict?: boolean; cache?: boolean } = {}): Promise<string> {
+  const cached = opts.cache === false ? null : await getSetting(env, "account_id");
   if (cached) return cached;
   const accounts = await cf.accounts();
   const names = [...new Set([await workerName(env), env.WORKER_NAME])];
   for (const a of accounts) {
     for (const name of names) {
       if (await cf.workerExists(a.id, name).catch(() => false)) {
-        await setSetting(env, "account_id", a.id);
+        if (opts.cache !== false) await setSetting(env, "account_id", a.id);
         return a.id;
       }
     }
   }
-  if (accounts.length === 1) return accounts[0].id; // 本地开发时 Worker 尚未部署
+  if (accounts.length === 1 && !opts.strict) return accounts[0].id; // 本地开发时 Worker 尚未部署
   throw new Error(
     `在你授权的账户中没有找到名为 ${names.join(" 或 ")} 的 Worker。请授权部署了本应用的那个账户；如果部署时改了 Worker 名称，请先通过 workers.dev 地址打开一次本应用，或把变量 WORKER_NAME 改成新名称`,
   );

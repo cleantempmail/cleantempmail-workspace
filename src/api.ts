@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { cfClient, loadSession, OPTIONAL_SCOPES, oauthConfigured, requireAdmin, requireSession, ReauthError, SCOPES, sessionTokenScope, workerAccountId } from "./auth";
 import type { AppEnv } from "./env";
 import { serveProxiedImage } from "./privacy";
+import { account } from "./routes/account";
 import { RESEND_FREE_DOMAINS, resendKey, SendError, type Provider } from "./providers";
 import { checkHealth, fixHealth, provisionDomain, refreshSendStatus, releaseResend, removeDomain, resendUsage, setFallback, setupSending } from "./provision";
 import { compose, HttpError, LIMITS } from "./routes/compose";
@@ -25,18 +26,26 @@ api.get("/me", async (c) => {
   const session = await loadSession(c);
   let memberLogin = false;
   let unclaimed = false;
+  let passwordLogin = false;
+  let passkeyLogin = false;
   if (!session) {
     const row = await c.env.DB.prepare(
       `SELECT (SELECT value FROM settings WHERE key = 'pref_member_login') AS pref, EXISTS (SELECT 1 FROM members WHERE disabled = 0) AS has,
-        EXISTS (SELECT 1 FROM settings WHERE key = 'owner_user_id') AS claimed`,
-    ).first<{ pref: string | null; has: number; claimed: number }>();
+        EXISTS (SELECT 1 FROM settings WHERE key = 'owner_user_id') AS claimed,
+        EXISTS (SELECT 1 FROM settings WHERE key = 'admin_password') AS pw,
+        EXISTS (SELECT 1 FROM passkeys) AS pk`,
+    ).first<{ pref: string | null; has: number; claimed: number; pw: number; pk: number }>();
     memberLogin = row?.pref !== "off" && Boolean(row?.has);
-    // 还没有管理员（刚部署）时，登录页提示「第一个登录的人成为管理员」
+    // 还没有管理员（刚部署）：显示首次设置页（粘贴 API 令牌 + 设置密码）
     unclaimed = !row?.claimed;
+    passwordLogin = Boolean(row?.pw);
+    passkeyLogin = Boolean(row?.pk);
   }
   return c.json({
     memberLogin,
     unclaimed,
+    passwordLogin,
+    passkeyLogin,
     loggedIn: Boolean(session),
     email: session?.email ?? null,
     role: session?.role ?? null,
@@ -60,6 +69,7 @@ api.use("*", requireSession);
 api.route("/", messages);
 api.route("/", compose);
 api.route("/", org);
+api.route("/", account);
 
 // ---------- 域名 ----------
 

@@ -23,6 +23,14 @@ export async function api(path, opts = {}) {
   return data;
 }
 
+// 登录相关接口（/auth/*）：失败时不刷新页面，把错误交给调用方显示
+export async function authApi(path, body = {}) {
+  const res = await fetch("/auth" + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(data.error || `请求失败（${res.status}）`, res.status, data.code);
+  return data;
+}
+
 // 带进度的附件上传（fetch 不支持上传进度，所以用 XHR）
 export function uploadFile(file, onProgress) {
   const xhr = new XMLHttpRequest();
