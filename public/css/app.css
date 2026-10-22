@@ -964,7 +964,9 @@ button.sb-empty { width: calc(100% - 4px); background: none; cursor: pointer; te
 .composer.closing { pointer-events: none; opacity: .7; }
 @media (max-width: 760px) {
   .c-from .from-fields { flex-wrap: wrap; row-gap: 4px; }
-  .from-addr { max-width: 100%; }
+  /* 显示名单独一行，地址和"常用地址"按钮在第二行 */
+  .c-from .from-name { flex: 1 0 100%; max-width: 100%; text-align: left; padding-left: 0; }
+  .from-addr { max-width: calc(100% - 40px); }
   .from-domain { max-width: 150px; }
 }
 
@@ -1088,3 +1090,13 @@ button.sb-empty { width: calc(100% - 4px); background: none; cursor: pointer; te
 .resend-usage .usage-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .resend-usage .usage-head b { margin-bottom: 0; }
 .resend-usage .id-list { border-top: 0; }
+
+/* 触屏设备：输入框字号不小于 16px，否则 iOS Safari 聚焦输入框时会自动放大页面。
+   不用 maximum-scale=1：它会让安卓上无法双指缩放，影响视力不好的用户 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea,
+  [contenteditable="true"] { font-size: 16px !important; }
+}
