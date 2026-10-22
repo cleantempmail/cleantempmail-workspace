@@ -2,6 +2,9 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "回复和转发的引用语言": "Quote language for replies and forwards",
+  "引用原文时插入的「…写道：」和转发信息用哪种语言。「跟随原邮件」会根据原邮件的文字自动选择：回复英文邮件用英文，回复中文邮件用中文": "The language of the “… wrote:” line and the forwarded-message header. “Match the original” picks it from the original email's text: English for English emails, Chinese for Chinese emails",
+  "跟随原邮件": "Match the original",
   "停用 Resend 发件（释放名额）": "Stop sending with Resend (free up a slot)",
   "停用并释放": "Stop and free up",
   "将从 Resend 删除这个域名（释放 1 个名额），并删除本应用写入的 Resend DNS 记录。": "This deletes the domain from Resend (freeing 1 slot) and removes the Resend DNS records this app added.",

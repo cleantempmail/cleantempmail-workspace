@@ -4,7 +4,7 @@ import { createEditor, sanitizeHtml, textToHtml } from "./editor.js";
 import { icon } from "./icons.js";
 import { emit, navigate, store } from "./store.js";
 import { confirmDialog, menu, pickDateTime, promptDialog, toast, toastError } from "./ui.js";
-import { debounce, esc, fileKind, fmtFull, fmtSize, fmtWhen, isEmail, parseList, prefs, timePresets } from "./util.js";
+import { debounce, esc, fileKind, fmtSize, fmtWhen, isEmail, parseList, prefs, timePresets } from "./util.js";
 
 // ---------- 收件人输入框（地址胶囊 + 自动补全） ----------
 function parseAddress(raw) {
@@ -853,6 +853,26 @@ function wrapHtml(html) {
 }
 
 // ---------- 回复 / 转发 的预填 ----------
+// 引用语言（"…写道："、转发信息）：可在设置里固定为中文或英文；默认跟随原邮件——
+// 以汉字为主（且没有日文假名、韩文）时用中文，否则用英文
+function quoteLang(m, html) {
+  const pref = prefs.get("quoteLang", "auto");
+  if (pref === "zh" || pref === "en") return pref;
+  const body = m.text || (html ? html.replace(/<(style|script)[\s\S]*?<\/\1>|<[^>]+>|&[a-z#0-9]+;/gi, " ") : "") || m.snippet || "";
+  const sample = `${m.subject || ""} ${body.slice(0, 4000)}`;
+  if (/[\u3040-\u30ff\uac00-\ud7af]/.test(sample)) return "en";
+  const han = (sample.match(/[\u4e00-\u9fff]/g) || []).length;
+  const words = (sample.match(/[A-Za-z]{2,}/g) || []).length;
+  return han >= 4 && han >= words * 0.5 ? "zh" : "en";
+}
+
+function quoteDate(ts, lang) {
+  const d = new Date(ts * 1000);
+  if (lang === "zh") return d.toLocaleString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  // 与 Gmail 一致：Thu, Oct 22, 2026 at 9:30 AM
+  return `${d.toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" })} at ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+}
+
 export async function replyPrefill(m, mode) {
   const sent = m.folder === "sent";
   const me = m.mailbox;
@@ -862,12 +882,20 @@ export async function replyPrefill(m, mode) {
   if (html === null && m.hasHtml) html = (await api(`/messages/${m.id}/body`).catch(() => ({ html: null }))).html;
   const quoteBody = html ? sanitizeHtml(html.length > 300000 ? textToHtml(m.text) : html) : textToHtml(m.text);
   const who = `${m.from_name ? esc(m.from_name) + " " : ""}&lt;${esc(m.from_addr)}&gt;`;
+  const ql = quoteLang(m, html);
+  const when = esc(quoteDate(m.created_at, ql));
   if (mode === "forward") {
-    const to = parseList(m.to_addrs).map((a) => esc(a.name ? `${a.name} <${a.address}>` : a.address)).join(", ");
+    const fmt = (list) => parseList(list).map((a) => esc(a.name ? `${a.name} <${a.address}>` : a.address)).join(", ");
+    const to = fmt(m.to_addrs);
+    const cc = fmt(m.cc_addrs);
+    const L = ql === "zh"
+      ? { title: "---------- 转发的邮件 ----------", from: "发件人：", date: "日期：", subject: "主题：", to: "收件人：", cc: "抄送：" }
+      : { title: "---------- Forwarded message ---------", from: "From: ", date: "Date: ", subject: "Subject: ", to: "To: ", cc: "Cc: " };
+    const head = `${L.title}<br>${L.from}${who}<br>${L.date}${when}<br>${L.subject}${esc(subj)}<br>${L.to}${to}${cc ? `<br>${L.cc}${cc}` : ""}`;
     return {
       from: me,
       subject: /^(fwd?|转发)\s*[:：]/i.test(subj) ? subj : "Fwd: " + subj,
-      quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">---------- 转发的邮件 ----------<br>发件人：${who}<br>日期：${esc(fmtFull(m.created_at))}<br>主题：${esc(subj)}<br>收件人：${to}</div><br>${quoteBody}</div>`,
+      quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">${head}</div><br>${quoteBody}</div>`,
       attachments: (m.attachments || []).filter((a) => !a.inline).map((a) => ({ messageId: m.id, index: a.index, filename: a.filename, size: a.size, type: a.mimeType })),
       focus: "to",
     };
@@ -884,7 +912,7 @@ export async function replyPrefill(m, mode) {
     to,
     cc,
     subject: /^(re|回复|答复)\s*[:：]/i.test(subj) ? subj : "Re: " + subj,
-    quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">在 ${esc(fmtFull(m.created_at))}，${who} 写道：</div><blockquote>${quoteBody}</blockquote></div>`,
+    quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">${ql === "zh" ? `在 ${when}，${who} 写道：` : `On ${when}, ${who} wrote:`}</div><blockquote>${quoteBody}</blockquote></div>`,
     replyToId: m.id,
   };
 }
