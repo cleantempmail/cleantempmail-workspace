@@ -4,7 +4,7 @@ import { icon } from "./icons.js";
 import { releaseResend } from "./resend.js";
 import { emit, isAdmin, store } from "./store.js";
 import { confirmDialog, menu, modal, toast, toastError } from "./ui.js";
-import { $, avatarColor, esc, fmtRelative, h } from "./util.js";
+import { $, avatarColor, esc, fmtRelative, h, lang } from "./util.js";
 
 export const REPO_URL = "https://github.com/cleantempmail/cleantempmail-workspace";
 
@@ -12,6 +12,77 @@ const BRAND = `<span class="brand"><img src="/brand/logo.svg?v=3" alt="" class="
 export { BRAND };
 
 // ---------- 登录 ----------
+// 登录页左侧的产品预览：用 HTML 画一个迷你收件箱（清晰、随界面语言切换），展示多域名、原地址回复和防追踪
+function heroPreview() {
+  const en = lang() === "en";
+  const T = en
+    ? {
+        compose: "Compose", inbox: "Inbox", starred: "Starred", sent: "Sent", domains: "Domains",
+        rows: [
+          ["AC", "#2f7bff", "Alice Chen", "09:41", "Partnership proposal", "We reviewed the proposal and can sign next week…", "sales@acme.com", "#f59e0b", true],
+          ["GH", "#57606a", "GitHub", "09:12", "[studio] New pull request #128", "feat: add dark mode to the dashboard", "dev@studio.dev", "#ec4899", true],
+          ["S", "#635bff", "Stripe", "Yesterday", "Your payout is on the way", "$2,480.00 will arrive in your bank account…", "billing@acme.com", "#f59e0b", false],
+          ["MW", "#e5484d", "Ming Wang", "Yesterday", "Interview schedule", "Thursday 3 PM works for me, see you then", "hr@acme.com", "#f59e0b", false],
+          ["CF", "#f38020", "Cloudflare", "Mon", "Your October invoice is ready", "$5.00 will be charged to your payment method", "billing@acme.com", "#f59e0b", false],
+          ["AL", "#12a150", "Alex Li", "Mon", "Design review, round two", "Updated the home and pricing pages, take a look", "design@studio.dev", "#ec4899", false],
+        ],
+        to: "To sales@acme.com", subject: "Partnership proposal", blocked: "2 trackers blocked", reply: "Reply", from: "Sends from sales@acme.com",
+        ai: "AI summary", aiText: "They've approved the proposal and want to sign next week. A draft contract is needed.",
+        me: "Me", earlier: "Attached is proposal v2 for your review", earlierTime: "Yesterday",
+      }
+    : {
+        compose: "写邮件", inbox: "收件箱", starred: "星标邮件", sent: "已发送", domains: "域名与地址",
+        rows: [
+          ["AC", "#2f7bff", "Alice Chen", "09:41", "合作方案确认", "我们看过方案了，下周可以签约…", "sales@acme.com", "#f59e0b", true],
+          ["GH", "#57606a", "GitHub", "09:12", "[studio] 新的 Pull Request #128", "feat: 控制台支持深色模式", "dev@studio.dev", "#ec4899", true],
+          ["S", "#635bff", "Stripe", "昨天", "你的付款已到账", "¥16,800.00 将在 1–2 个工作日内到账…", "billing@acme.com", "#f59e0b", false],
+          ["王", "#e5484d", "王小明", "昨天", "面试时间安排", "周四下午三点可以，到时见", "hr@acme.com", "#f59e0b", false],
+          ["CF", "#f38020", "Cloudflare", "周一", "你的 10 月账单已生成", "本月费用 $5.00，将从你的付款方式扣除", "billing@acme.com", "#f59e0b", false],
+          ["李", "#12a150", "李安", "周一", "设计稿第二版", "首页和定价页都更新了，帮忙看看", "design@studio.dev", "#ec4899", false],
+        ],
+        to: "发给 sales@acme.com", subject: "合作方案确认", blocked: "已拦截 2 个追踪像素", reply: "回复", from: "将使用 sales@acme.com 发出",
+        ai: "AI 摘要", aiText: "对方已确认合作方案，希望下周签约，需要准备合同初稿。",
+        me: "我", earlier: "附件是合作方案第二版，请查收", earlierTime: "昨天",
+      };
+  const rows = T.rows
+    .map(
+      ([ini, c, name, time, subj, snip, box, dc, unread], i) => `<div class="pv-row ${unread ? "unread" : ""} ${i === 0 ? "on" : ""}">
+        <span class="pv-av" style="--c:${c}">${ini}</span>
+        <div class="pv-main"><div class="pv-top"><b>${name}</b><time>${time}</time></div><div class="pv-subj">${subj}</div>
+          <div class="pv-bot"><span class="pv-snip">${snip}</span><span class="pv-chip"><i style="--c:${dc}"></i>${box}</span></div></div></div>`,
+    )
+    .join("");
+  return `<div class="hero-preview" aria-hidden="true" data-no-i18n>
+    <div class="pv-window">
+      <div class="pv-bar"><i></i><i></i><i></i><span class="pv-url">mail.acme.com</span></div>
+      <div class="pv-body">
+        <aside class="pv-side">
+          <div class="pv-compose">${T.compose}</div>
+          <div class="pv-nav on"><span>${T.inbox}</span><b>2</b></div>
+          <div class="pv-nav"><span>${T.starred}</span></div>
+          <div class="pv-nav"><span>${T.sent}</span></div>
+          <div class="pv-group">${T.domains}</div>
+          <div class="pv-dom"><i style="--c:#f59e0b"></i>acme.com</div>
+          <div class="pv-addr">sales@</div><div class="pv-addr">hr@</div><div class="pv-addr">billing@</div>
+          <div class="pv-dom"><i style="--c:#ec4899"></i>studio.dev</div>
+        </aside>
+        <section class="pv-list">${rows}</section>
+        <section class="pv-reader">
+          <div class="pv-h">${T.subject}</div>
+          <div class="pv-ai"><b>${icon("sparkles")}${T.ai}</b><span>${T.aiText}</span></div>
+          <div class="pv-collapsed"><span class="pv-av" style="--c:#0a66d8">${T.me === "我" ? "我" : "Me"}</span><b>${T.me}</b><span>${T.earlier}</span><time>${T.earlierTime}</time></div>
+          <div class="pv-card">
+            <div class="pv-sender"><span class="pv-av" style="--c:#2f7bff">AC</span><div><b>Alice Chen</b><span>${T.to}</span></div></div>
+            <div class="pv-shield">${icon("shieldCheck")}${T.blocked}</div>
+            <i class="pv-line" style="width:92%"></i><i class="pv-line" style="width:84%"></i><i class="pv-line" style="width:88%"></i><i class="pv-line" style="width:52%"></i>
+          </div>
+          <div class="pv-replybar"><span class="pv-btn">${icon("reply")}${T.reply}</span><span class="pv-from">${T.from}</span></div>
+        </section>
+      </div>
+    </div>
+  </div>`;
+}
+
 export function renderLogin(root) {
   root.innerHTML = `
   <div class="auth">
@@ -19,15 +90,15 @@ export function renderLogin(root) {
       ${BRAND}
       <h1>你的所有域名，<br />一个收件箱。</h1>
       <ul class="auth-points">
-        <li>${icon("zap")}<div><b>一键开通</b><span>选中 Cloudflare 里的域名，自动配置收件与发件</span></div></li>
-        <li>${icon("at")}<div><b>任意地址都能收</b><span>默认 Catch-all，不用提前创建邮箱</span></div></li>
-        <li>${icon("reply")}<div><b>用原地址回复</b><span>发到 sales@ 的邮件，回复时自动用 sales@ 发出</span></div></li>
-        <li>${icon("shield")}<div><b>数据在你自己的账户</b><span>部署在你的 Cloudflare，邮件存在你的 D1 与 R2</span></div></li>
+        <li>${icon("zap")}<div><b>一键开通</b><span>选中域名，自动配置收发件</span></div></li>
+        <li>${icon("at")}<div><b>任意地址都能收</b><span>默认 Catch-all，无需提前建邮箱</span></div></li>
+        <li>${icon("reply")}<div><b>用原地址回复</b><span>收到哪个地址，就用哪个地址回复</span></div></li>
+        <li>${icon("shield")}<div><b>数据在你自己的账户</b><span>邮件存在你自己的 D1 与 R2</span></div></li>
       </ul>
+      ${heroPreview()}
     </div>
     <div class="auth-panel">
       <div class="auth-card">
-        <img src="/brand/logo.svg?v=3" alt="" class="auth-logo" />
         <h2>登录 Workspace</h2>
         <p class="muted">管理员使用部署本应用的 Cloudflare 账户登录</p>
         <a class="btn primary lg block" href="/auth/login">${icon("cloud")}使用 Cloudflare 登录</a>

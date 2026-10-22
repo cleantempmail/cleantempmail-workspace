@@ -2,6 +2,10 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "选中域名，自动配置收发件": "Pick a domain and it's ready to go",
+  "默认 Catch-all，无需提前建邮箱": "Catch-all, no mailboxes to create",
+  "收到哪个地址，就用哪个地址回复": "Replies use the receiving address",
+  "邮件存在你自己的 D1 与 R2": "Mail stays in your own D1 and R2",
   "推荐：设置加密密钥": "Recommended: set an encryption key",
   "在同一个地方再添加一个名为": "In the same place, add another Secret named",
   "的 Secret，值可以直接用下面这串随机生成的密钥。登录凭据和 API Key 会用它加密，密钥与数据库分开存放。设置后不要修改或删除。": "and use the randomly generated key below as its value. Sign-in credentials and API keys are encrypted with it, and the key is stored separately from the database. Don't change or delete it afterwards.",
