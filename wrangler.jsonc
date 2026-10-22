@@ -1,34 +1,57 @@
+// 免绑卡版（由 scripts/lite-config.mjs 自动生成）：不使用 R2，邮件正文存 D1，大附件存 KV
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "cf-mailbox",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat"],
-  // 默认通过 https://<name>.<你的子域>.workers.dev 访问。
-  // 想用自己的域名：在 wrangler.local.jsonc（不提交到 git）里写 routes，见 README「设置访问域名」；
-  // 一键部署的用户也可以在控制台 Worker → Settings → Domains & Routes 添加自定义域名
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "preview_urls": false,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/auth/*"]
+    "run_worker_first": [
+      "/api/*",
+      "/auth/*"
+    ]
   },
   "d1_databases": [
-    { "binding": "DB", "database_name": "cf-mailbox", "migrations_dir": "migrations" }
+    {
+      "binding": "DB",
+      "database_name": "cf-mailbox",
+      "migrations_dir": "migrations"
+    },
+    {
+      "binding": "BLOBS",
+      "database_name": "cf-mailbox-blobs"
+    }
   ],
-  "r2_buckets": [{ "binding": "MAIL", "bucket_name": "cf-mailbox" }],
-  // 不加限制：可以从任何已开通 Email Sending 的域名发给任意收件人
-  "send_email": [{ "name": "EMAIL" }],
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
   "vars": {
-    // Worker 名称（catch-all 规则按名称投递邮件）。部署时改了名称也不要紧：
-    // 通过 workers.dev 地址访问时程序会自动识别真实名称
     "WORKER_NAME": "cf-mailbox"
   },
-  // 每分钟：定时发送、稍后提醒、投递状态；每天 03:17（UTC）：清理垃圾箱与过期附件
-  "triggers": { "crons": ["* * * * *", "17 3 * * *"] },
-  // Workers AI：会话摘要、翻译、起草回复、可选的垃圾邮件判定
-  "ai": { "binding": "AI" },
-  "observability": { "enabled": true }
+  "triggers": {
+    "crons": [
+      "* * * * *",
+      "17 3 * * *"
+    ]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "KV"
+    }
+  ]
 }
