@@ -40,7 +40,7 @@ export function clearThread() {
 }
 
 function placeholder() {
-  const n = store.stats.unread;
+  const n = store.route.view === "inbox" ? store.stats.unread : 0;
   return `<div class="reader-empty">
     <img src="/brand/logo.svg?v=3" alt="" class="reader-empty-logo" />
     <h3>${n ? `${n} 封未读邮件` : "选择一封邮件开始阅读"}</h3>
@@ -138,13 +138,13 @@ function messageCard(m, expanded) {
 function bodyHtml(m) {
   if (m.hasHtml) {
     const images = trusted(m) ? 1 : 0;
-    return `<div class="remote-banner" hidden></div>
+    return `<div class="remote-banner i18n" hidden></div>
       <div class="html-frame"><iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"
         src="/api/messages/${encodeURIComponent(m.id)}/html?images=${images}" title="邮件正文"></iframe></div>
-      <button class="quote-toggle" hidden aria-label="显示引用内容">${icon("moreH")}</button>`;
+      <button class="quote-toggle i18n" hidden aria-label="显示引用内容">${icon("moreH")}</button>`;
   }
   const { main, quoted } = renderPlainText(m.text);
-  return `<div class="text-body">${main || '<span class="muted">（无正文）</span>'}</div>${quoted ? `<button class="quote-toggle" aria-label="显示引用内容">${icon("moreH")}</button><div class="text-body quoted" hidden>${quoted}</div>` : ""}`;
+  return `<div class="text-body">${main || '<span class="muted">（无正文）</span>'}</div>${quoted ? `<button class="quote-toggle i18n" aria-label="显示引用内容">${icon("moreH")}</button><div class="text-body quoted" hidden>${quoted}</div>` : ""}`;
 }
 
 function attachmentsHtml(m, atts) {

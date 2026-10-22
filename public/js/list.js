@@ -4,7 +4,7 @@ import { openComposer } from "./compose.js";
 import { icon } from "./icons.js";
 import { emit, navigate, store, viewTitle } from "./store.js";
 import { confirmDialog, labelMenu, menu, modal, pickDateTime, toast, toastError } from "./ui.js";
-import { $, avatar, dateGroup, displayName, esc, fmtListTime, fmtWhen, h, parseList, timePresets } from "./util.js";
+import { $, avatar, avatarColor, dateGroup, displayName, esc, fmtListTime, fmtWhen, h, parseList, timePresets } from "./util.js";
 
 const pane = () => $(".list-pane");
 
@@ -141,6 +141,13 @@ function labelChips(ids) {
     .join("");
 }
 
+// 收件 / 发件地址标签：圆点颜色与侧栏一致（地址设置了颜色就用地址颜色，否则用域名颜色）
+function boxTag(mailbox, title) {
+  const info = (store.addresses || []).find((a) => a.address === mailbox);
+  const color = info?.color || avatarColor((mailbox || "").split("@")[1] || mailbox);
+  return `<span class="tag tag-box" title="${esc(title)}"><span class="box-dot" style="--dc:${esc(color)}"></span>${esc(mailbox || "")}</span>`;
+}
+
 function rowHtml(t, focusable) {
   const L = store.list;
   const sel = L.selected.has(t.thread_id);
@@ -154,8 +161,8 @@ function rowHtml(t, focusable) {
       <div class="row-main">
         <div class="row-top"><span class="row-from">${sched ? `<span class="sched-tag i18n ${t.status === "failed" ? "bad" : ""}">${t.status === "failed" ? "定时发送失败" : "定时 " + esc(fmtWhen(t.send_at))}</span>` : `<span class="draft-tag i18n">草稿</span>`}${to ? esc(to) : '<span class="i18n">（未填写收件人）</span>'}</span><time>${fmtListTime(t.updated_at)}</time></div>
         <div class="row-subject">${t.subject ? esc(t.subject) : '<span class="i18n">（无主题）</span>'}</div>
-        <div class="row-snippet">${esc(t.error || (t.text || "").slice(0, 140))}</div>
-        <div class="row-tags"><span class="tag">${icon("at")}${esc(t.from || "")}</span>${t.attachments?.length ? `<span class="tag">${icon("paperclip")}${t.attachments.length}</span>` : ""}</div>
+        <div class="row-bottom"><span class="row-snippet">${esc(t.error || (t.text || "").slice(0, 140))}</span>
+          <span class="row-tags">${boxTag(t.from, "发件地址")}${t.attachments?.length ? `<span class="tag">${icon("paperclip")}${t.attachments.length}</span>` : ""}</span></div>
       </div>
       <div class="row-hover"><button class="icon-btn sm" data-draft-del title="${sched ? "取消定时发送" : "删除草稿"}" aria-label="删除">${icon(sched ? "x" : "trash")}</button></div>
     </div>`;
@@ -163,8 +170,9 @@ function rowHtml(t, focusable) {
   const isSent = t.folder === "sent";
   const fromName = isSent ? "我" : displayName(t.from_name, t.from_addr);
   const view = store.route.view;
-  const quick = (view === "trash" ? ["restore", "delete"] : view === "spam" ? ["notspam", "delete_spam"] : view === "snoozed" ? ["unsnooze", "trash"] : view === "archive" ? ["unarchive", "trash", "snooze"] : ["archive", "trash", "snooze", t.unread ? "read" : "unread"])
-    .map((a) => `<button class="icon-btn sm" data-act="${a}" title="${ACTION_META[a].label}" aria-label="${ACTION_META[a].label}">${icon(ACTION_META[a].icon)}</button>`)
+  const starAct = t.any_star ? "unstar" : "star";
+  const quick = (view === "trash" ? ["restore", "delete"] : view === "spam" ? ["notspam", "delete_spam"] : view === "snoozed" ? ["unsnooze", "trash", starAct] : view === "archive" ? ["unarchive", "trash", "snooze", starAct] : ["archive", "trash", "snooze", t.unread ? "read" : "unread", starAct])
+    .map((a) => `<button class="icon-btn sm ${a === "unstar" ? "starred" : ""}" data-act="${a}" title="${ACTION_META[a].label}" aria-label="${ACTION_META[a].label}">${icon(ACTION_META[a].icon, a === "unstar" ? "filled" : "")}</button>`)
     .join("");
   const d = isSent && DELIVERY_ICON[t.delivery];
   return `<div class="row ${t.unread ? "unread" : ""} ${sel ? "selected" : ""} ${active ? "active" : ""}" data-tid="${esc(t.thread_id)}" role="listitem" ${tab}
@@ -176,14 +184,13 @@ function rowHtml(t, focusable) {
     <div class="row-main">
       <div class="row-top">
         <span class="row-from">${esc(participantsText(t))}</span>${t.cnt > 1 ? `<span class="row-count">${t.cnt}</span>` : ""}
-        <span class="row-icons">${d ? `<span class="dlv ${d[2]}" title="${d[1]}">${icon(d[0])}</span>` : ""}${t.any_att ? icon("paperclip") : ""}</span>
+        <span class="row-icons">${d ? `<span class="dlv ${d[2]}" title="${d[1]}">${icon(d[0])}</span>` : ""}${t.any_att ? icon("paperclip") : ""}${t.any_star ? `<span class="row-star" title="已加星标">${icon("star", "filled")}</span>` : ""}</span>
         <time title="${new Date(t.created_at * 1000).toLocaleString("zh-CN")}">${view === "snoozed" && t.snooze_until ? esc(fmtWhen(t.snooze_until)) : fmtListTime(t.created_at)}</time>
       </div>
       <div class="row-subject">${t.subject ? esc(t.subject) : '<span class="i18n">（无主题）</span>'}</div>
-      <div class="row-snippet">${esc(t.snippet || "")}</div>
-      <div class="row-tags"><span class="tag ${t.folder === "inbox" ? "tag-in" : ""}" title="${t.folder === "inbox" ? "收件地址" : "发件地址"}">${icon(t.folder === "inbox" ? "inbox" : "send")}${esc(t.mailbox)}</span>${labelChips(t.labels)}</div>
+      <div class="row-bottom"><span class="row-snippet">${esc(t.snippet || "")}</span>
+        <span class="row-tags">${labelChips(t.labels)}${boxTag(t.mailbox, t.folder === "inbox" ? "收件地址" : "发件地址")}</span></div>
     </div>
-    <button class="star-btn ${t.any_star ? "on" : ""}" data-act="${t.any_star ? "unstar" : "star"}" title="${t.any_star ? "取消星标" : "加星标"}" aria-label="星标" tabindex="-1">${icon("star", t.any_star ? "filled" : "")}</button>
     <div class="row-hover">${quick}</div>
   </div>`;
 }
