@@ -116,8 +116,8 @@ async function general(body) {
     <section class="set-card">
       <div class="set-row"><div><b>撤销发送</b><span>点击发送后等待几秒再真正发出，期间可以撤销</span></div>
         ${seg("undo", [["0", "关闭"], ["5", "5 秒"], ["10", "10 秒"], ["20", "20 秒"]], prefs.get("undoSeconds", 5))}</div>
-      <div class="set-row"><div><b>回复方式</b><span>「在会话中」会在邮件下方直接展开写信框，可随时弹出为独立窗口；「弹出窗口」在右下角打开写信窗口</span></div>
-        ${seg("replyMode", [["inline", "在会话中"], ["window", "弹出窗口"]], prefs.get("replyMode", "inline"))}</div>
+      <div class="set-row"><div><b>回复方式</b><span>「弹出窗口」在右下角打开写信窗口；「在会话中」会在邮件下方直接展开写信框，可随时弹出为独立窗口</span></div>
+        ${seg("replyMode", [["window", "弹出窗口"], ["inline", "在会话中"]], prefs.get("replyMode", "window"))}</div>
       <div class="set-row"><div><b>回复和转发的引用语言</b><span>引用原文时插入的「…写道：」和转发信息用哪种语言。「跟随原邮件」会根据原邮件的文字自动选择：回复英文邮件用英文，回复中文邮件用中文</span></div>
         ${seg("quoteLang", [["auto", "跟随原邮件"], ["zh", "中文"], ["en", "English"]], prefs.get("quoteLang", "auto"))}</div>
       <div class="set-row"><div><b>新邮件推送通知</b><span>${pushSupported() ? "即使关闭了页面，收到新邮件也会弹出系统通知（每台设备单独开启）" : "这个浏览器不支持推送通知"}</span></div>

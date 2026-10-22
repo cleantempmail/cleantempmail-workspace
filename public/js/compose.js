@@ -203,7 +203,7 @@ export async function openComposer(prefill = {}, opts = {}) {
     await current.close({ save: true, quiet: true });
   }
   // 回复方式可在设置里改成弹出窗口
-  const mount = opts.mount?.isConnected && innerWidth >= 760 && prefs.get("replyMode", "inline") === "inline" ? opts.mount : null;
+  const mount = opts.mount?.isConnected && innerWidth >= 760 && prefs.get("replyMode", "window") === "inline" ? opts.mount : null;
   current = new Composer(prefill, { mount });
 }
 
