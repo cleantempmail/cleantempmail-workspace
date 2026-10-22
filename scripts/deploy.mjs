@@ -14,6 +14,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isLite, parseJsonc, readConfig, toLite } from "./config.mjs";
+import { ensureAccountSubdomain, ensureWorkerReachable } from "./workers-dev.mjs";
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const run = (args, opts = {}) => spawnSync(npx, ["wrangler", ...args], { encoding: "utf8", ...opts });
@@ -81,8 +82,14 @@ const migrate = () => wrangler(["d1", "migrations", "apply", "DB", "--remote"]);
 const deploy = () => wrangler(["deploy"]);
 let ok;
 try {
+  // --dry-run：只检查配置和打包，不部署、不改数据库
   if (process.argv.includes("--dry-run")) ok = wrangler(["deploy", "--dry-run"]);
-  else ok = databaseExists() ? migrate() && deploy() : deploy() && migrate();
+  else {
+    // 一键部署的新账户可能还没有 workers.dev 子域：先补注册，否则部署出来没有访问地址
+    await ensureAccountSubdomain(config);
+    ok = databaseExists() ? migrate() && deploy() : deploy() && migrate();
+    if (ok) await ensureWorkerReachable(config);
+  }
 } finally {
   if (custom) rmSync(GENERATED, { force: true });
 }
