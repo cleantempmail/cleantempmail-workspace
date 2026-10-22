@@ -1,6 +1,6 @@
 // CleanTempMail Workspace —— 入口：布局、侧栏、路由、轮询、快捷键
 import { api } from "./api.js";
-import { composerHasUnsaved, hasPendingSends, openComposer } from "./compose.js";
+import { composerHasUnsaved, hasPendingSends, openComposer, reattachInline } from "./compose.js";
 import { icon } from "./icons.js";
 import { createLabel, loadList, moveSelection, renderList, snoozeMenu, threadAction } from "./list.js";
 import { BRAND, renderAddressesPage, renderDomainsPage, renderLogin, renderSetup } from "./pages.js";
@@ -85,6 +85,7 @@ function renderShell() {
       </main>
     </div>
     <button class="fab mobile-only" data-compose aria-label="写邮件">${icon("pen")}</button>
+    <nav class="tabbar mobile-only" aria-label="快捷导航"></nav>
   </div>`;
 
   bindSearch();
@@ -218,7 +219,21 @@ function bindResizer() {
 }
 
 // ---------- 侧栏 ----------
+// 手机底部标签栏：收件箱 / 星标 / 已发送 / 更多（打开侧栏）
+function renderTabbar() {
+  const bar = $(".tabbar");
+  if (!bar) return;
+  const v = store.route.view;
+  const unread = store.stats?.unread || 0;
+  const tab = (view, ic, label, badge = 0) =>
+    `<a class="tab ${v === view ? "on" : ""}" href="${hrefFor(view)}" ${v === view ? 'aria-current="page"' : ""}>${icon(ic)}<span>${label}</span>${badge ? `<b class="tab-badge">${badge > 99 ? "99+" : badge}</b>` : ""}</a>`;
+  bar.innerHTML = `${tab("inbox", "inbox", "收件箱", unread)}${tab("starred", "star", "星标")}${tab("sent", "send", "已发送")}
+    <button class="tab" data-tab-more aria-label="更多">${icon("menu")}<span>更多</span></button>`;
+  bar.querySelector("[data-tab-more]").onclick = () => document.querySelector(".app").classList.add("nav-open");
+}
+
 function renderSidebar() {
+  renderTabbar();
   const el = $(".sidebar");
   if (!el) return;
   const r = store.route;
@@ -231,7 +246,8 @@ function renderSidebar() {
     }</a>`;
   };
   const addrInfo = new Map((store.addresses || []).map((a) => [a.address, a]));
-  const collapsed = new Set(prefs.get("collapsedDomains", []));
+  // 域名多于 2 个时，默认只展开第一个；用户手动展开/收起后按用户的来
+  const collapsed = new Set(prefs.get("collapsedDomains", null) ?? (store.domains.length > 2 ? store.domains.slice(1).map((d) => d.name) : []));
   const domains = store.domains
     .map((d) => {
       const boxes = s.mailboxes.filter((m) => m.domain === d.name);
@@ -319,6 +335,7 @@ async function onRoute() {
   const prev = store.route;
   store.route = r;
   const isPage = PAGES.includes(r.view);
+  if (isPage) reattachInline(null, null); // 阅读区要隐藏了：内嵌的回复转成浮动窗口（写过内容）或收起
   $(".list-pane").hidden = isPage;
   $(".reader-pane").hidden = isPage;
   $(".resizer").hidden = isPage;

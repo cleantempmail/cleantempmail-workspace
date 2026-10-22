@@ -2,6 +2,8 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "在独立窗口中编辑": "Edit in a separate window",
+  "快捷导航": "Quick navigation",
   "选中域名，自动配置收发件": "Pick a domain and it's ready to go",
   "默认 Catch-all，无需提前建邮箱": "Catch-all, no mailboxes to create",
   "收到哪个地址，就用哪个地址回复": "Replies use the receiving address",
@@ -860,6 +862,7 @@ const releaseAfter = (after) =>
   ({ "，之后改用 Cloudflare 发件": ", now sending with Cloudflare", "，这个域名暂时只能收信": ", this domain can only receive for now", "，已关闭备用发件": ", backup sending turned off" })[after] ?? "";
 
 export const PATTERNS = [
+  [/^回复 (.+)…$/, "Reply to $1…"],
   [/^停用 (.+) 的 Resend 发件？$/, "Stop sending with Resend for $1?"],
   [/^正在从 Resend 删除 (.+)…$/, "Deleting $1 from Resend…"],
   [/^已用 (\d+) 个，免费版上限 (\d+) 个(，已满)?$/, (_m, n, max, full) => `${n} used, free plan limit ${max}${full ? " (full)" : ""}`],

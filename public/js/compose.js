@@ -188,7 +188,8 @@ export function hasOpenComposer() {
 // 有用户改过、但还没保存成草稿的内容
 export const composerHasUnsaved = () => Boolean(current?.touched && current.dirty);
 
-export async function openComposer(prefill = {}) {
+// opts.mount：嵌入到阅读区底部的回复框（宽屏）；否则是浮动窗口
+export async function openComposer(prefill = {}, opts = {}) {
   prefill = (await prefill) ?? {};
   if (!store.domains.length) {
     toast("请先在「域名管理」中添加域名", { type: "error" });
@@ -201,11 +202,32 @@ export async function openComposer(prefill = {}) {
     }
     await current.close({ save: true, quiet: true });
   }
-  current = new Composer(prefill);
+  const mount = opts.mount?.isConnected && innerWidth >= 760 ? opts.mount : null;
+  current = new Composer(prefill, { mount });
 }
 
+// 阅读区重新渲染后，把内嵌的回复框放回新的位置（同一会话）；
+// 换了会话、或阅读区要隐藏（slot 为 null）时，写过内容的转成浮动窗口，没写过的直接收起
+export function reattachInline(slot, threadId) {
+  if (!current?.mount) return;
+  if (slot && current.el.parentElement === slot) return;
+  if (slot && current.threadId && current.threadId === threadId) {
+    slot.appendChild(current.el);
+    current.mount = slot;
+    return;
+  }
+  if (current.touched && !current.isEmpty()) current.popOut();
+  else current.destroy();
+}
+// 阅读区被整个替换（例如切到设置页）时也不能丢掉正在写的回复
+new MutationObserver(() => {
+  if (current?.mount && !current.el.isConnected) queueMicrotask(() => reattachInline(null, null));
+}).observe(document.documentElement, { childList: true, subtree: true });
+
 class Composer {
-  constructor(p) {
+  constructor(p, { mount = null } = {}) {
+    this.mount = mount;
+    this.threadId = p.threadId || null;
     this.state = {
       draftId: p.draftId || crypto.randomUUID(),
       replyToId: p.replyToId || null,
@@ -233,13 +255,14 @@ class Composer {
     this.fromName = p.fromName ?? ident.name;
 
     const el = document.createElement("section");
-    el.className = "composer" + (innerWidth < 760 ? " maximized" : "");
+    el.className = "composer" + (this.mount ? " inline" : innerWidth < 760 ? " maximized" : "");
     el.setAttribute("role", "dialog");
     el.setAttribute("aria-label", "写邮件");
     el.innerHTML = `
       <header class="composer-head">
         <span class="composer-title">${esc(p.subject || (p.replyToId ? "回复" : "新邮件"))}</span>
         <div class="composer-head-actions">
+          <button class="icon-btn sm" data-act="popout" title="在独立窗口中编辑" aria-label="在独立窗口中编辑">${icon("external")}</button>
           <button class="icon-btn sm" data-act="min" title="最小化 (Esc)" aria-label="最小化">${icon("minimize")}</button>
           <button class="icon-btn sm" data-act="max" title="展开" aria-label="展开">${icon("maximize")}</button>
           <button class="icon-btn sm" data-act="close" title="保存并关闭" aria-label="关闭窗口">${icon("x")}</button>
@@ -281,7 +304,7 @@ class Composer {
         <button class="icon-btn danger-hover" data-act="discard" title="舍弃草稿" aria-label="舍弃草稿">${icon("trash")}</button>
       </footer>
       <div class="drop-overlay">${icon("upload")}<span>松开即可添加附件</span></div>`;
-    document.body.appendChild(el);
+    (this.mount || document.body).appendChild(el);
     this.el = el;
     const q = (s) => el.querySelector(s);
 
@@ -311,6 +334,7 @@ class Composer {
     q(".composer-head").addEventListener("dblclick", (e) => !e.target.closest("button") && this.toggleMin());
     q(".composer-title").onclick = () => this.el.classList.contains("minimized") && this.toggleMin();
     q('[data-act="max"]').onclick = () => this.toggleMax();
+    q('[data-act="popout"]').onclick = () => this.popOut();
     q('[data-act="close"]').onclick = () => this.close({ save: true });
     q('[data-act="discard"]').onclick = () => this.discard();
     q('[data-act="attach"]').onclick = () => q(".file-input").click();
@@ -337,7 +361,7 @@ class Composer {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
         this.send();
-      } else if (e.key === "Escape" && !document.querySelector(".modal-backdrop") && !el.querySelector(".sugg")) {
+      } else if (e.key === "Escape" && !this.mount && !document.querySelector(".modal-backdrop") && !el.querySelector(".sugg")) {
         e.preventDefault();
         this.toggleMin(true);
       }
@@ -600,6 +624,15 @@ class Composer {
   }
   restore() {
     this.el.classList.remove("minimized");
+  }
+  // 内嵌回复框 → 浮动窗口
+  popOut() {
+    if (!this.mount) return;
+    this.mount = null;
+    this.el.classList.remove("inline");
+    if (innerWidth < 760) this.el.classList.add("maximized");
+    document.body.appendChild(this.el);
+    this.el.classList.add("show");
   }
   async close({ save = true, quiet = false } = {}) {
     if (save && this.touched && !this.isEmpty()) {
@@ -898,6 +931,7 @@ export async function replyPrefill(m, mode) {
       quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">${head}</div><br>${quoteBody}</div>`,
       attachments: (m.attachments || []).filter((a) => !a.inline).map((a) => ({ messageId: m.id, index: a.index, filename: a.filename, size: a.size, type: a.mimeType })),
       focus: "to",
+      threadId: m.thread_id,
     };
   }
   const original = parseList(m.to_addrs).map((a) => a.address);
@@ -914,5 +948,6 @@ export async function replyPrefill(m, mode) {
     subject: /^(re|回复|答复)\s*[:：]/i.test(subj) ? subj : "Re: " + subj,
     quoteHtml: `<div class="cfm-quote"><p><br></p><div class="cfm-quote-head">${ql === "zh" ? `在 ${when}，${who} 写道：` : `On ${when}, ${who} wrote:`}</div><blockquote>${quoteBody}</blockquote></div>`,
     replyToId: m.id,
+    threadId: m.thread_id,
   };
 }

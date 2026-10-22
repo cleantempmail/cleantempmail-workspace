@@ -102,7 +102,7 @@ export function fmtSize(n) {
 }
 
 // 根据地址生成稳定的头像颜色
-const PALETTE = ["#e8590c", "#d6336c", "#ae3ec9", "#7048e8", "#4263eb", "#1c7ed6", "#1098ad", "#0ca678", "#37b24d", "#74b816", "#f59f00", "#f76707"];
+const PALETTE = ["#b8694a", "#b35a78", "#8e6bb8", "#5f6fc0", "#3f7fb5", "#3a8f9c", "#4a9a78", "#7a9648", "#b48a3a", "#8a7564"];
 export function avatarColor(s) {
   let h = 0;
   for (const ch of String(s || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;

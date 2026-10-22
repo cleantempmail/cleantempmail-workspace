@@ -1,6 +1,7 @@
 // 阅读视图：会话卡片、HTML 正文（沙箱 iframe）、发件人验证、垃圾邮件、投递状态、退订、标签、稍后提醒、AI
 import { api } from "./api.js";
-import { openComposer, replyPrefill } from "./compose.js";
+import { emptyArt } from "./art.js";
+import { openComposer, reattachInline, replyPrefill } from "./compose.js";
 import { icon } from "./icons.js";
 import { labelEditor, snoozeMenu, threadAction } from "./list.js";
 import { emit, isAdmin, navigate, store } from "./store.js";
@@ -42,7 +43,7 @@ export function clearThread() {
 function placeholder() {
   const n = store.route.view === "inbox" ? store.stats.unread : 0;
   return `<div class="reader-empty">
-    <img src="/brand/logo.svg?v=3" alt="" class="reader-empty-logo" />
+    ${emptyArt("mailOpen")}
     <h3>${n ? `${n} 封未读邮件` : "选择一封邮件开始阅读"}</h3>
     <p>按 <kbd>j</kbd> / <kbd>k</kbd> 上下切换，<kbd>c</kbd> 写邮件，<kbd>?</kbd> 查看全部快捷键</p>
   </div>`;
@@ -212,9 +213,8 @@ export function renderReader() {
       : [
           anyInbox ? (archived ? ["unarchive", "unarchive", "移回收件箱"] : ["archive", "archive", "归档 (e)"]) : null,
           ["trash", "trash", "删除 (#)"],
-          anyInbox ? ["unread", "mail", "标为未读 (Shift+U)"] : null,
-          anyInbox ? ["spam", "shieldAlert", "报告垃圾邮件 (!)"] : null,
         ].filter(Boolean);
+  const moreActs = !inTrash && !spam && anyInbox ? [["unread", "mail", "标为未读"], ["spam", "shieldAlert", "报告垃圾邮件"]] : [];
 
   el.innerHTML = `
     <div class="reader-toolbar" role="toolbar" aria-label="会话操作">
@@ -226,7 +226,6 @@ export function renderReader() {
       <span class="tb-spacer"></span>
       ${store.me.ai && !inTrash ? `<button class="btn ghost sm ai-btn" data-ai-summary title="AI 摘要">${icon("sparkles")}<span>摘要</span></button>` : ""}
       ${!inTrash ? `<button class="icon-btn star-btn ${anyStar ? "on" : ""}" data-thread-act="${anyStar ? "unstar" : "star"}" title="星标 (s)" aria-label="星标">${icon("star", anyStar ? "filled" : "")}</button>` : ""}
-      <button class="icon-btn" data-print title="打印" aria-label="打印">${icon("printer")}</button>
       <button class="icon-btn" data-thread-more title="更多" aria-label="更多">${icon("more")}</button>
     </div>
     <div class="reader-scroll">
@@ -243,17 +242,28 @@ export function renderReader() {
       <div class="thread-msgs">${msgs.map((m) => messageCard(m, expandedIds.has(m.id))).join("")}</div>
       ${
         !inTrash && last
-          ? `<div class="reply-bar">
-              <button class="btn" data-reply-last="reply">${icon("reply")}回复</button>
-              ${parseList(last.to_addrs).length + parseList(last.cc_addrs).length > 1 ? `<button class="btn" data-reply-last="replyAll">${icon("replyAll")}全部回复</button>` : ""}
-              <button class="btn" data-reply-last="forward">${icon("forward")}转发</button>
-              <span class="reply-hint">回复时自动使用 <b>${esc(last.mailbox)}</b> 发出</span>
+          ? `<div class="reply-zone">
+              <div class="reply-box">
+                <button class="reply-prompt" data-reply-last="reply">${icon("reply")}<span>回复 ${esc(displayName(senderOf(last).name, senderOf(last).address))}…</span></button>
+                <div class="reply-alt">
+                  ${parseList(last.to_addrs).length + parseList(last.cc_addrs).length > 1 ? `<button class="btn ghost sm" data-reply-last="replyAll">${icon("replyAll")}全部回复</button>` : ""}
+                  <button class="btn ghost sm" data-reply-last="forward">${icon("forward")}转发</button>
+                </div>
+              </div>
+              <div class="reply-slot"></div>
+              <p class="reply-hint">回复时自动使用 <b>${esc(last.mailbox)}</b> 发出</p>
             </div>`
           : ""
       }
     </div>`;
-  bindReader(el);
+  bindReader(el, moreActs);
+  reattachInline(el.querySelector(".reply-slot"), t.threadId);
+  if (t.threadId !== lastShown) el.querySelector(".reader-scroll")?.classList.add("enter");
+  lastShown = t.threadId;
 }
+let lastShown = null;
+
+const replySlot = () => document.querySelector(".reader-pane .reply-slot");
 
 function spamReason(m) {
   if (!m) return "";
@@ -262,7 +272,7 @@ function spamReason(m) {
   return "原因：屏蔽名单、规则或 AI 判定";
 }
 
-function bindReader(el) {
+function bindReader(el, moreActs = []) {
   const t = store.thread;
   const msgs = t.messages;
   const find = (id) => msgs.find((m) => m.id === id);
@@ -270,7 +280,6 @@ function bindReader(el) {
 
   el.querySelector("[data-back]").onclick = () => navigate(r.view, r.arg, null);
   el.querySelectorAll("[data-thread-act]").forEach((b) => (b.onclick = () => threadActionFromReader(b.dataset.threadAct)));
-  el.querySelector("[data-print]").onclick = () => window.print();
   el.querySelector("[data-snooze]")?.addEventListener("click", (e) => snoozeMenu(e.currentTarget, [t.threadId]));
   el.querySelector("[data-labels]")?.addEventListener("click", (e) => labelEditor(e.currentTarget, [t.threadId], t.labels || [], (labels) => ((t.labels = labels), renderReader())));
   el.querySelectorAll("[data-unlabel]").forEach(
@@ -291,6 +300,8 @@ function bindReader(el) {
   el.querySelector("[data-thread-more]").onclick = (e) => {
     const lastIn = [...msgs].reverse().find((m) => m.folder === "inbox");
     menu(e.currentTarget, [
+      ...moreActs.map(([a, ic, label]) => ({ label, icon: ic, onClick: () => threadActionFromReader(a) })),
+      ...(moreActs.length ? ["-"] : []),
       { label: "全部展开", icon: "layers", onClick: () => el.querySelectorAll(".msg.collapsed").forEach((m) => expand(m)) },
       { label: "打印", icon: "printer", onClick: () => window.print() },
       lastIn ? { label: "下载原始邮件 (.eml)", icon: "code", onClick: () => (location.href = `/api/messages/${lastIn.id}/raw`) } : null,
@@ -299,7 +310,7 @@ function bindReader(el) {
       lastIn && isAdmin() ? { label: `停用地址 ${lastIn.mailbox}`, icon: "bellOff", onClick: () => disableAddress(lastIn.mailbox) } : null,
     ].filter(Boolean));
   };
-  el.querySelectorAll("[data-reply-last]").forEach((b) => (b.onclick = () => openComposer(replyPrefill(msgs[msgs.length - 1], b.dataset.replyLast))));
+  el.querySelectorAll("[data-reply-last]").forEach((b) => (b.onclick = () => openComposer(replyPrefill(msgs[msgs.length - 1], b.dataset.replyLast), { mount: replySlot() })));
 
   el.querySelectorAll(".msg").forEach((card) => {
     const m = find(card.dataset.id);
@@ -315,14 +326,14 @@ function bindReader(el) {
       e.currentTarget.classList.toggle("open", !d.hidden);
       e.currentTarget.setAttribute("aria-expanded", String(!d.hidden));
     });
-    card.querySelector("[data-reply]")?.addEventListener("click", () => openComposer(replyPrefill(m, "reply")));
+    card.querySelector("[data-reply]")?.addEventListener("click", () => openComposer(replyPrefill(m, "reply"), { mount: replySlot() }));
     card.querySelector("[data-msg-act]")?.addEventListener("click", (e) => messageAction(m, e.currentTarget.dataset.msgAct));
     card.querySelector("[data-more]")?.addEventListener("click", (e) => {
       const inbox = m.folder === "inbox";
       menu(e.currentTarget, [
-        { label: "回复", icon: "reply", hint: "r", onClick: () => openComposer(replyPrefill(m, "reply")) },
-        { label: "全部回复", icon: "replyAll", hint: "a", onClick: () => openComposer(replyPrefill(m, "replyAll")) },
-        { label: "转发", icon: "forward", hint: "f", onClick: () => openComposer(replyPrefill(m, "forward")) },
+        { label: "回复", icon: "reply", hint: "r", onClick: () => openComposer(replyPrefill(m, "reply"), { mount: replySlot() }) },
+        { label: "全部回复", icon: "replyAll", hint: "a", onClick: () => openComposer(replyPrefill(m, "replyAll"), { mount: replySlot() }) },
+        { label: "转发", icon: "forward", hint: "f", onClick: () => openComposer(replyPrefill(m, "forward"), { mount: replySlot() }) },
         store.me.ai ? { label: "翻译成中文", icon: "languages", onClick: () => translate(card, m, "zh") } : null,
         store.me.ai ? { label: "翻译成英文", icon: "languages", onClick: () => translate(card, m, "en") } : null,
         "-",
@@ -606,7 +617,7 @@ function lightbox(m, startIndex) {
 
 export function replyToCurrent(mode) {
   const msgs = store.thread?.messages;
-  if (msgs?.length) openComposer(replyPrefill(msgs[msgs.length - 1], mode));
+  if (msgs?.length) openComposer(replyPrefill(msgs[msgs.length - 1], mode), { mount: replySlot() });
 }
 
 export function threadShortcut(action) {

@@ -96,3 +96,5 @@ export function icon(name, cls = "") {
   const fill = name === "star" && cls.includes("filled");
   return `<svg class="i ${cls}" viewBox="0 0 24 24" fill="${fill ? "currentColor" : "none"}" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] ?? ""}</svg>`;
 }
+
+export { P as ICON_PATHS };

@@ -1,5 +1,6 @@
 // 会话列表
 import { api } from "./api.js";
+import { emptyArt, inboxZero } from "./art.js";
 import { openComposer } from "./compose.js";
 import { icon } from "./icons.js";
 import { emit, navigate, store, viewTitle } from "./store.js";
@@ -100,19 +101,14 @@ const EMPTY = {
   label: ["这个标签下还没有邮件", "可以在邮件上点 🏷 添加标签，或在设置里用规则自动打标签。"],
 };
 
-const INBOX_ZERO = `<svg class="zero-art" viewBox="0 0 160 120" aria-hidden="true"><defs><linearGradient id="zg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6157ff"/><stop offset=".5" stop-color="#2f7bff"/><stop offset="1" stop-color="#14c8ff"/></linearGradient></defs>
-<circle cx="80" cy="62" r="46" fill="url(#zg)" opacity=".1"/><rect x="42" y="38" width="76" height="52" rx="12" fill="none" stroke="url(#zg)" stroke-width="5"/>
-<path d="m54 52 12 16 14-12 14 12 12-16" fill="none" stroke="url(#zg)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M120 22c1 5 4 8 9 9-5 1-8 4-9 9-1-5-4-8-9-9 5-1 8-4 9-9Z" fill="#7fe3ff"/><circle cx="36" cy="30" r="3" fill="#9db4ff"/><circle cx="132" cy="84" r="2.5" fill="#6157ff" opacity=".5"/></svg>`;
-
 function emptyState() {
   const r = store.route;
   if (!store.domains.length)
-    return `<div class="empty">${icon("globe", "empty-icon")}<h3>先添加一个域名</h3><p>选择 Cloudflare 账户中的域名，一键开通收件和发件。</p><a class="btn primary" href="#/domains">${icon("plus")}添加域名</a></div>`;
-  if (store.list.q) return `<div class="empty">${icon("search", "empty-icon")}<h3>没有找到匹配的邮件</h3><p>换个关键词，或用 from: to: has:附件 is:未读 before:2026-01-01 缩小范围。</p></div>`;
-  if (store.list.filter !== "all") return `<div class="empty">${icon("filter", "empty-icon")}<h3>没有符合筛选条件的邮件</h3></div>`;
+    return `<div class="empty">${emptyArt("globe")}<h3>先添加一个域名</h3><p>选择 Cloudflare 账户中的域名，一键开通收件和发件。</p><a class="btn primary" href="#/domains">${icon("plus")}添加域名</a></div>`;
+  if (store.list.q) return `<div class="empty">${emptyArt("search")}<h3>没有找到匹配的邮件</h3><p>换个关键词，或用 from: to: has:附件 is:未读 before:2026-01-01 缩小范围。</p></div>`;
+  if (store.list.filter !== "all") return `<div class="empty">${emptyArt("filter")}<h3>没有符合筛选条件的邮件</h3></div>`;
   const [t, d] = EMPTY[r.view] ?? EMPTY.all;
-  const art = r.view === "inbox" ? INBOX_ZERO : icon({ trash: "trash", spam: "shieldAlert", starred: "star", drafts: "draft", sent: "send", snoozed: "clock", label: "tag" }[r.view] ?? "inbox", "empty-icon");
+  const art = r.view === "inbox" ? inboxZero : emptyArt({ trash: "trash", spam: "shieldAlert", starred: "star", drafts: "draft", sent: "send", snoozed: "clock", label: "tag", archive: "archive" }[r.view] ?? "inbox");
   return `<div class="empty">${art}<h3>${t}</h3>${d ? `<p>${d}</p>` : ""}</div>`;
 }
 
