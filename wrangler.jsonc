@@ -37,9 +37,16 @@
   "vars": {
     "WORKER_NAME": "cf-mailbox"
   },
-  // 每分钟：定时发送、稍后提醒、投递状态；每天 03:17（UTC）：清理废纸篓与过期附件
-  "triggers": { "crons": ["* * * * *", "17 3 * * *"] },
-  // Workers AI：会话摘要、翻译、起草回复、可选的垃圾邮件判定
-  "ai": { "binding": "AI" },
-  "observability": { "enabled": true }
+  "triggers": {
+    "crons": [
+      "* * * * *",
+      "17 3 * * *"
+    ]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "observability": {
+    "enabled": true
+  }
 }
