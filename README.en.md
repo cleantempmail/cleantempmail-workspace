@@ -44,7 +44,7 @@ Everything is created in your own Cloudflare account. Use **one-click deploy** (
 
 1. Use **Standard** if R2 is enabled on your account, otherwise **No-card**. Sign in to Cloudflare and connect your GitHub (or GitLab) account when asked
 2. Set the repository name, Worker name and database / storage names (the defaults are fine), then deploy. Cloudflare copies the code into your GitHub, creates the databases and storage (Standard: D1 + R2; No-card: two D1 databases + KV), deploys, and runs the migrations
-3. Open the deployed address, `https://<worker-name>.<your-subdomain>.workers.dev`, and follow the three setup steps: click "Create token on Cloudflare" (the permissions are preselected) → paste the token back → set an admin password. No OAuth client and no environment variables needed
+3. Open the deployed address, `https://<worker-name>.<your-subdomain>.workers.dev` (the build log prints it at the end; if your account has no workers.dev subdomain yet, one is registered during deploy), and follow the three setup steps: click "Create token on Cloudflare" (the permissions are preselected) → paste the token back → set an admin password. No OAuth client and no environment variables needed
 4. You land in the mailbox; add a domain (same as [step 5](#5-add-a-domain) below)
 
 To use your own hostname: open the Worker in the dashboard → **Settings → Domains & Routes → Add → Custom domain**.
@@ -183,6 +183,7 @@ Limits to know:
 - **Mail isn't arriving**: click "Health check" on the domain card. It checks Email Routing, MX, catch-all, SPF and DMARC and can fix them in one click
 - **Cloudflare sending fails**: usually the account doesn't have Workers Paid. Switch to Resend, or set Resend as the backup
 - **Resend says the domain slots are full**: the free plan allows 3 domains. Free one up (see step 7) or upgrade your Resend plan. With many domains, Workers Paid with Cloudflare sending is simpler: 3,000 emails/month included and no limit on the number of domains
+- **No address after deploying**: check the "访问地址" (address) line at the end of the build log. If it's missing, open the Worker in the dashboard → **Settings → Domains & Routes** and enable workers.dev or add a custom domain
 - **AI features unavailable**: summaries, translation and reply drafts use Workers AI, which has a daily free allowance
 
 ## Plans

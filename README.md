@@ -97,7 +97,7 @@
 
 1. 账户开通了 R2 就点「标准版」，没绑卡的点「免绑卡版」。登录 Cloudflare，按提示连接你的 GitHub（或 GitLab）账户
 2. 设置仓库名、Worker 名称和数据库 / 存储桶名称，保持默认即可，然后点部署。Cloudflare 会把代码复制一份到你的 GitHub，自动创建需要的数据库和存储（标准版：D1 + R2；免绑卡版：两个 D1 + KV），完成部署和建表
-3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`，按首次设置页的三步操作：点「在 Cloudflare 创建令牌」（权限已经预先选好）→ 把令牌粘贴回来 → 设置管理员密码。不需要创建 OAuth 客户端，也不需要填任何环境变量
+3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`（构建日志最后会打印这个地址；账户还没有 workers.dev 子域的话，部署时会自动注册一个），按首次设置页的三步操作：点「在 Cloudflare 创建令牌」（权限已经预先选好）→ 把令牌粘贴回来 → 设置管理员密码。不需要创建 OAuth 客户端，也不需要填任何环境变量
 4. 完成后直接进入邮箱，添加域名（同下面的[第 5 步](#第-5-步添加域名)）
 
 想用自己的域名访问：控制台打开这个 Worker → **Settings → Domains & Routes → Add → Custom domain**。
@@ -237,6 +237,7 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 - **收不到邮件**：在域名卡片上点「健康检查」，会逐项检查 Email Routing、MX、Catch-all、SPF、DMARC，并可以一键修复
 - **Cloudflare 发件失败**：通常是账户没有开通 Workers Paid。可以改用 Resend，或把 Resend 设为备用
 - **Resend 提示名额已满**：免费版最多 3 个域名。先释放一个不常用的域名（见第 6 步），或升级 Resend 套餐。域名多的话，开通 Workers Paid 用 Cloudflare 发件更省事：每月含 3,000 封，不限域名数
+- **部署后找不到访问地址**：看构建日志最后一行的「访问地址」。如果没有，在控制台打开这个 Worker → **Settings → Domains & Routes**，启用 workers.dev 或添加自定义域名
 - **Workers AI 功能不可用**：AI 摘要、翻译、起草回复使用 Workers AI，有每日免费额度，用完后会提示稍后再试
 
 ## 套餐说明
