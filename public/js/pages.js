@@ -1,6 +1,7 @@
 // 页面：登录、首次配置、域名管理（含健康检查）、地址管理
-import { api } from "./api.js";
+import { api, authApi } from "./api.js";
 import { icon } from "./icons.js";
+import { loginWithPasskey, passkeySupported } from "./passkey.js";
 import { releaseResend } from "./resend.js";
 import { emit, isAdmin, store } from "./store.js";
 import { confirmDialog, menu, modal, toast, toastError } from "./ui.js";
@@ -100,8 +101,22 @@ export function renderLogin(root) {
     <div class="auth-panel">
       <div class="auth-card">
         <h2>登录 Workspace</h2>
-        <p class="muted">管理员使用部署本应用的 Cloudflare 账户登录</p>
-        <a class="btn primary lg block" href="/auth/login">${icon("cloud")}使用 Cloudflare 登录</a>
+        <p class="muted">管理员登录</p>
+        ${
+          store.me.passwordLogin
+            ? `<form class="admin-login" novalidate>
+          <input class="input" type="password" name="password" placeholder="管理员密码" autocomplete="current-password" aria-label="管理员密码" />
+          <button class="btn primary lg block" type="submit">${icon("logIn")}登录</button>
+        </form>`
+            : ""
+        }
+        ${store.me.passwordLogin ? `<p class="small center-text forgot"><button class="link-btn" data-forgot>忘记密码？</button></p>` : ""}
+        ${store.me.passkeyLogin && passkeySupported() ? `<button class="btn lg block" data-passkey>${icon("key")}使用通行密钥登录</button>` : ""}
+        ${
+          store.me.oauthConfigured || store.me.devLogin
+            ? `<a class="btn ${store.me.passwordLogin ? "" : "primary"} lg block" href="/auth/login">${icon("cloud")}使用 Cloudflare 登录</a>`
+            : ""
+        }
         ${store.me.devLogin ? `<p class="small muted center-text">本地开发模式：将跳过 OAuth</p>` : ""}
         ${
           store.me.memberLogin
@@ -125,6 +140,34 @@ export function renderLogin(root) {
         location.reload();
       }),
   );
+  const admin = root.querySelector(".admin-login");
+  if (admin) {
+    admin.password.focus();
+    admin.onsubmit = async (e) => {
+      e.preventDefault();
+      const btn = admin.querySelector("button");
+      btn.disabled = true;
+      try {
+        await authApi("/password", { password: admin.password.value });
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        admin.password.select();
+        toast(err.message, { type: "error" });
+      }
+    };
+  }
+  root.querySelector("[data-forgot]")?.addEventListener("click", () => resetPasswordModal());
+  root.querySelector("[data-passkey]")?.addEventListener("click", async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      await loginWithPasskey();
+      location.reload();
+    } catch (err) {
+      e.currentTarget.disabled = false;
+      toast(err.message, { type: "error" });
+    }
+  });
   const form = root.querySelector(".member-login");
   if (!form) return;
   form.onsubmit = async (e) => {
@@ -138,31 +181,115 @@ export function renderLogin(root) {
   };
 }
 
-// ---------- 首次配置 ----------
+// 忘记密码：粘贴同一个 Cloudflare 账户的 API 令牌，重新设置密码
+function resetPasswordModal() {
+  const body = h(`<form class="form reset-form" novalidate>
+    <p class="dialog-text">能为部署本应用的 Cloudflare 账户创建 API 令牌，就能证明你是管理员。创建一个令牌粘贴到下面，然后设置新密码。</p>
+    <a class="btn sm" href="${tokenTemplateUrl()}" target="_blank" rel="noopener">${icon("external")}在 Cloudflare 创建令牌</a>
+    <label class="field-label">API 令牌</label><input class="input" name="token" type="password" autocomplete="off" spellcheck="false" />
+    <label class="field-label">新密码（至少 10 位）</label><input class="input" name="password" type="password" autocomplete="new-password" />
+    <label class="field-label">再输入一次</label><input class="input" name="password2" type="password" autocomplete="new-password" />
+  </form>`);
+  const f = body;
+  modal({
+    title: "重设管理员密码",
+    body,
+    actions: [
+      { label: "取消" },
+      {
+        label: "重设并登录",
+        kind: "primary",
+        onClick: async () => {
+          if (f.password.value !== f.password2.value) {
+            toast("两次输入的密码不一致", { type: "error" });
+            return false;
+          }
+          const r = await authApi("/reset", { token: f.token.value, password: f.password.value });
+          for (const w of r.warnings || []) toast(w, { type: "info", duration: 8000 });
+          setTimeout(() => location.reload(), 300);
+        },
+      },
+    ],
+  });
+}
+
+// ---------- 首次设置 ----------
+// 令牌需要的权限（与 OAuth 的权限对应）。键名用于 Cloudflare 的「预填权限」链接
+const TOKEN_PERMS = [
+  ["user_details", "read", "User Details · Read"],
+  ["account_settings", "read", "Account Settings · Read"],
+  ["workers_scripts", "read", "Workers Scripts · Read"],
+  ["zone", "read", "Zone · Read"],
+  ["zone_settings", "edit", "Zone Settings · Edit"],
+  ["dns", "edit", "DNS · Edit"],
+  ["email_routing_rules", "edit", "Email Routing Rules · Edit"],
+  ["email_sending", "edit", "Email Sending · Edit"],
+  ["analytics", "read", "Analytics · Read (optional)"],
+];
+export const tokenTemplateUrl = () =>
+  `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(JSON.stringify(TOKEN_PERMS.map(([key, type]) => ({ key, type }))))}&accountId=*&zoneId=all&name=${encodeURIComponent("CleanTempMail Workspace")}`;
+export const tokenPermsHtml = () => `<div class="scope-list">${TOKEN_PERMS.map(([, , label]) => `<code>${esc(label)}</code>`).join("")}</div>`;
+
 export function renderSetup(root) {
-  // 在浏览器里随机生成，不经过服务器
-  const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
   const code = (s) => `<div class="code"><code>${esc(s)}</code><button class="icon-btn xs" data-copy="${esc(s)}" title="复制" aria-label="复制">${icon("check", "copied")}<span class="copy-ic">${icon("draft")}</span></button></div>`;
   root.innerHTML = `
   <div class="setup-page">
     <div class="setup-card">
       ${BRAND}
-      <h1>还差一步：创建 OAuth 客户端</h1>
-      <p class="muted">Workspace 部署在你自己的 Cloudflare 账户里。为了用 Cloudflare 账户登录并自动配置域名，需要在同一个账户里创建一个<b>私有</b> OAuth 客户端（只有本账户成员能授权，无需域名验证）。只需做一次。</p>
-      <ol class="setup-steps">
-        <li><b>打开 OAuth 客户端页面</b><span>Cloudflare 控制台 → Manage Account → OAuth clients → Create client</span>
-          <a class="btn sm" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noopener">${icon("external")}打开控制台</a></li>
-        <li><b>基本设置</b><span>Response Type 选 <code>Code</code>；Grant Type 选 <code>Authorization Code</code> 和 <code>Refresh Token</code>；Token Authentication Method 选 <code>Client Secret Basic</code></span></li>
-        <li><b>Redirect URL</b>${code(store.me.redirectUri)}</li>
-        <li><b>勾选权限</b><div class="scope-list">${store.me.scopes.map((s) => `<code>${esc(s)}</code>`).join("")}</div>
-          <span>可选：再勾选 ${store.me.optionalScopes.map((s) => `<code>${esc(s)}</code>`).join(" ")}，用于显示外发邮件的投递状态（已送达 / 退信）。</span></li>
-        <li><b>保存 Client ID 与 Secret</b><span>Workers → 本 Worker → Settings → Runtime variables and secrets，添加两个 <b>Secret</b> 类型变量，然后部署：</span>${code("CF_OAUTH_CLIENT_ID")}${code("CF_OAUTH_CLIENT_SECRET")}</li>
-        <li><b>推荐：设置加密密钥</b><span>在同一个地方再添加一个名为 <code>APP_SECRET</code> 的 Secret，值可以直接用下面这串随机生成的密钥。登录凭据和 API Key 会用它加密，密钥与数据库分开存放。设置后不要修改或删除。</span>${code("APP_SECRET")}${code(secret)}</li>
-      </ol>
-      <button class="btn primary" data-reload>${icon("refresh")}我已设置完成，刷新</button>
+      <h1>欢迎！三步完成设置</h1>
+      <p class="muted">为了自动配置域名和收发件，Workspace 需要一个能访问你 Cloudflare 账户的 API 令牌。令牌加密后只保存在你自己的数据库里。</p>
+      <form class="setup-form" novalidate>
+        <ol class="setup-steps">
+          <li><b>创建 API 令牌</b>
+            <span>点下面的按钮，需要的权限已经预先选好。在「账户资源」里选择部署了本应用的账户，然后点「继续以显示摘要」→「创建令牌」，复制生成的令牌。</span>
+            <a class="btn primary sm" href="${tokenTemplateUrl()}" target="_blank" rel="noopener">${icon("external")}在 Cloudflare 创建令牌</a>
+            <details class="perm-list"><summary>需要的权限（如果没有自动选上，手动添加这些）</summary>${tokenPermsHtml()}</details></li>
+          <li><b>粘贴令牌</b>
+            <input class="input" name="token" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴刚才复制的令牌" aria-label="API 令牌" /></li>
+          <li><b>设置管理员密码</b>
+            <span>以后用这个密码登录，至少 10 位。登录后还可以在「设置 → 账户与安全」添加通行密钥（指纹 / 面容）。</span>
+            <input class="input" name="password" type="password" autocomplete="new-password" placeholder="管理员密码" aria-label="管理员密码" />
+            <input class="input" name="password2" type="password" autocomplete="new-password" placeholder="再输入一次" aria-label="再输入一次密码" /></li>
+        </ol>
+        <button class="btn primary lg" type="submit">${icon("check")}完成设置</button>
+      </form>
+      <details class="setup-advanced">
+        <summary>高级：改用 Cloudflare OAuth 登录（可选）</summary>
+        <p class="muted small">如果你更希望用 Cloudflare 账户直接登录，可以在同一个账户里创建一个<b>私有</b> OAuth 客户端（只有本账户成员能授权）。配置好以后，登录页会出现「使用 Cloudflare 登录」。</p>
+        <ol class="setup-steps">
+          <li><b>打开 OAuth 客户端页面</b><span>Cloudflare 控制台 → Manage Account → OAuth clients → Create client</span>
+            <a class="btn sm" href="https://dash.cloudflare.com/?to=/:account/oauth-clients" target="_blank" rel="noopener">${icon("external")}打开控制台</a></li>
+          <li><b>基本设置</b><span>Response Type 选 <code>Code</code>；Grant Type 选 <code>Authorization Code</code> 和 <code>Refresh Token</code>；Token Authentication Method 选 <code>Client Secret Basic</code></span></li>
+          <li><b>Redirect URL</b>${code(store.me.redirectUri)}</li>
+          <li><b>勾选权限</b><div class="scope-list">${store.me.scopes.map((s) => `<code>${esc(s)}</code>`).join("")}</div>
+            <span>可选：再勾选 ${store.me.optionalScopes.map((s) => `<code>${esc(s)}</code>`).join(" ")}，用于显示外发邮件的投递状态（已送达 / 退信）。</span></li>
+          <li><b>保存 Client ID 与 Secret</b><span>Workers → 本 Worker → Settings → Runtime variables and secrets，添加两个 <b>Secret</b> 类型变量：</span>${code("CF_OAUTH_CLIENT_ID")}${code("CF_OAUTH_CLIENT_SECRET")}</li>
+        </ol>
+        ${store.me.oauthConfigured ? `<a class="btn" href="/auth/login">${icon("cloud")}使用 Cloudflare 登录</a>` : ""}
+      </details>
     </div>
   </div>`;
-  root.querySelector("[data-reload]").onclick = () => location.reload();
+  const form = root.querySelector(".setup-form");
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const token = form.token.value.trim();
+    if (!token) return toast("请粘贴 API 令牌", { type: "error" });
+    if (form.password.value.length < 10) return toast("密码至少 10 位", { type: "error" });
+    if (form.password.value !== form.password2.value) return toast("两次输入的密码不一致", { type: "error" });
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    const t = toast("正在检查令牌…", { type: "loading", duration: 0 });
+    try {
+      const r = await authApi("/setup", { token, password: form.password.value });
+      t.close();
+      for (const w of r.warnings || []) toast(w, { type: "info", duration: 8000 });
+      setTimeout(() => location.reload(), (r.warnings || []).length ? 2500 : 300);
+    } catch (err) {
+      t.close();
+      btn.disabled = false;
+      toast(err.message, { type: "error", duration: 8000 });
+    }
+  };
   bindCopy(root);
 }
 

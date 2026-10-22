@@ -36,7 +36,8 @@ async function boot() {
   store.me = await api("/me");
   if (!store.me.loggedIn) {
     document.title = "登录 · CleanTempMail Workspace";
-    return store.me.oauthConfigured || store.me.devLogin ? renderLogin(root) : renderSetup(root);
+    // 还没有管理员：首次设置（粘贴 API 令牌 + 设置密码）；本地开发模式直接显示登录页
+    return store.me.unclaimed && !store.me.devLogin ? renderSetup(root) : renderLogin(root);
   }
   const [domains, stats, identities, settings, labels, addresses] = await Promise.all([
     api("/domains"),
