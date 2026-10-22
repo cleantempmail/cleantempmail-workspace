@@ -3,3 +3,6 @@ node_modules
 .dev.vars
 .DS_Store
 *.log
+# 个人部署配置（自定义域名等）
+wrangler.local.jsonc
+.wrangler.deploy.json

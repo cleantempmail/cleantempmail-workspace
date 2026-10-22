@@ -4,6 +4,8 @@
 
 [中文](README.md) · [Deploy](#deploy) · [Update](#updating)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+
 A self-hosted, multi-domain mailbox that runs entirely in your own Cloudflare account (a separate product from the public CleanTempMail disposable-mail service).
 
 Sign in with Cloudflare, pick domains from your account, and inbound and outbound mail are set up in one click:
@@ -20,16 +22,40 @@ All data (D1 + R2) stays in your account. The UI is available in Chinese and Eng
 
 ## Deploy
 
-Takes about 15 minutes. Everything is created in your own Cloudflare account.
+Everything is created in your own Cloudflare account. Use **one-click deploy** (nothing to install) or the **command line** (if you want to change the code).
 
 ### Requirements
 
 - A Cloudflare account, with the domains you want to receive mail on using Cloudflare DNS
-- **R2** enabled once in the dashboard (free tier available)
-- [Node.js](https://nodejs.org/) 20+ and git
+- **R2** enabled once in the dashboard (free tier available); deployment fails without it
 - One of the following sending services (or both, as backups for each other):
   - **Cloudflare Email Sending**: requires Workers Paid ($5/month)
-  - **Resend**: sign up at [resend.com](https://resend.com) and create an API key (free plan: 100 emails/day, 3,000/month)
+  - **Resend**: sign up at [resend.com](https://resend.com) and create an API key (free plan: 100 emails/day, 3,000/month, up to 3 domains)
+
+### Option A: one-click deploy
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+
+1. Click the button, sign in to Cloudflare, and connect your GitHub (or GitLab) account when asked
+2. Set the repository name, Worker name and database / bucket names (the defaults are fine), then deploy. Cloudflare copies the code into your GitHub, creates the D1 database and R2 bucket, deploys, and runs the migrations
+3. Open the deployed address, `https://<worker-name>.<your-subdomain>.workers.dev`. It walks you through creating the OAuth client, with copy buttons for the redirect URL and scopes. Add the Client ID, Client Secret and the recommended `APP_SECRET` under the Worker's **Settings → Runtime variables and secrets** (type: Secret)
+4. Reload, sign in with Cloudflare and add a domain (same as [step 6](#6-sign-in-and-add-a-domain) below)
+
+To use your own hostname: open the Worker in the dashboard → **Settings → Domains & Routes → Add → Custom domain**.
+
+**Updating**: the copy in your GitHub doesn't pick up new versions automatically. In your repository, run the commands below; after the push, Cloudflare redeploys and migrates the database automatically:
+
+```bash
+git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # once
+git pull upstream main
+git push
+```
+
+If `wrangler.jsonc` conflicts, keep your own `name` and `database_id`.
+
+### Option B: command line
+
+Requires [Node.js](https://nodejs.org/) 20+ and git.
 
 ### 1. Get the code
 
@@ -39,23 +65,23 @@ cd cleantempmail-workspace
 npm install
 ```
 
-### 2. Set the app's address
+### 2. Optional: use your own hostname
 
-In `wrangler.jsonc`, replace `web.cleantempmail.com` under `routes` with your own hostname, e.g. `mail.example.com`. It must be a hostname on a zone in your account; Cloudflare creates the DNS record and certificate automatically.
+By default the app is served at `https://cf-mailbox.<your-subdomain>.workers.dev`. To use your own hostname, copy the example file:
 
-```jsonc
-"routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
+```bash
+cp wrangler.local.example.jsonc wrangler.local.jsonc
 ```
 
-To use a `*.workers.dev` address instead, delete the `routes` line and set `workers_dev` to `true`.
+Replace `mail.example.com` with your hostname (it must be on a zone in your account; Cloudflare creates the DNS record and certificate). This file isn't committed; `npm run deploy` applies it on top of `wrangler.jsonc`, so `git pull` never conflicts.
 
-> Leave everything else as is. If you rename the Worker (`name`), set `vars.WORKER_NAME` to the same value: the catch-all rule delivers mail to the Worker by that name.
+You can also deploy on workers.dev first and add a custom domain later under the Worker's **Settings → Domains & Routes**.
 
 ### 3. Deploy
 
 ```bash
 npx wrangler login     # authorize wrangler in your browser
-npm run deploy         # deploys the Worker, creates the D1 database and R2 bucket, then runs migrations
+npm run deploy         # first deploy: creates the D1 database and R2 bucket, deploys the Worker, runs migrations
 ```
 
 ### 4. Set an encryption key (recommended)

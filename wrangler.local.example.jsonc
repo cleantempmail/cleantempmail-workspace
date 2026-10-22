@@ -1,0 +1,8 @@
+// 复制为 wrangler.local.jsonc 后修改（该文件不提交到 git）。
+// npm run deploy 时会用这里的字段覆盖 wrangler.jsonc 里的同名字段，git pull 更新时不会冲突。
+{
+  // 用自己的域名访问（必须是你账户里某个域名的子域名，Cloudflare 自动创建 DNS 记录和证书）
+  "routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
+  // 有了自定义域名后可以关闭 *.workers.dev 地址
+  "workers_dev": false
+}

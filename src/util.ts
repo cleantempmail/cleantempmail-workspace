@@ -158,3 +158,19 @@ export async function hmacSign(env: Env, data: string): Promise<string> {
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
   return b64url(new Uint8Array(sig).slice(0, 16));
 }
+
+// 本 Worker 的名称：Catch-all 按名称把邮件投递给 Worker。一键部署时用户可以改名，而 vars.WORKER_NAME 不会跟着变，
+// 所以通过 <名称>.<子域>.workers.dev 访问时，从地址里识别真实名称并记下来（自定义域名访问时沿用已记下的或 WORKER_NAME）
+let seenWorkerName: string | null = null;
+export function noteWorkerHost(env: Env, host: string): Promise<unknown> | null {
+  const m = host.toLowerCase().match(/^(?:[0-9a-f]{8}-)?([a-z0-9][a-z0-9-]*)\.[a-z0-9-]+\.workers\.dev$/);
+  if (!m || m[1] === seenWorkerName) return null;
+  seenWorkerName = m[1];
+  return env.DB.prepare("INSERT INTO settings (key, value) VALUES ('worker_name', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value WHERE value != excluded.value")
+    .bind(m[1])
+    .run()
+    .catch(() => {});
+}
+export async function workerName(env: Env): Promise<string> {
+  return (await getSetting(env, "worker_name")) ?? env.WORKER_NAME;
+}

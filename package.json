@@ -4,9 +4,9 @@
   "description": "Self-hosted multi-domain mailbox on Cloudflare Workers (Email Routing + Email Sending / Resend)",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy && wrangler d1 migrations apply cf-mailbox --remote",
-    "update": "wrangler d1 migrations apply cf-mailbox --remote && wrangler deploy",
-    "db:local": "wrangler d1 migrations apply cf-mailbox --local",
+    "deploy": "node scripts/deploy.mjs",
+    "update": "node scripts/deploy.mjs",
+    "db:local": "wrangler d1 migrations apply DB --local",
     "typecheck": "tsc"
   },
   "license": "MIT",
@@ -20,5 +20,18 @@
     "typescript": "^7.0.2",
     "wrangler": "^4.151.3"
   },
-  "private": true
+  "private": true,
+  "cloudflare": {
+    "bindings": {
+      "DB": {
+        "description": "D1 database for message metadata, threads, search index and settings."
+      },
+      "MAIL": {
+        "description": "R2 bucket for raw messages and attachments. **R2 must be enabled on your account** (free tier available)."
+      },
+      "WORKER_NAME": {
+        "description": "Name of this Worker, used by the catch-all rule. Leave it as is: if you rename the Worker, the app detects the real name when you open it at its `workers.dev` address."
+      }
+    }
+  }
 }

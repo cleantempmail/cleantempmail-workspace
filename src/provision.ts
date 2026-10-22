@@ -2,7 +2,7 @@
 import { Cf } from "./cf";
 import type { Env } from "./env";
 import { resendApi, resendDomains, resendFindOrCreateDomain, resendKey, resendRecordFqdn, type Provider, type ResendDomain } from "./providers";
-import { getSetting, now, setSetting } from "./util";
+import { getSetting, now, setSetting, workerName } from "./util";
 
 export interface Step {
   step: string;
@@ -70,19 +70,20 @@ export async function provisionDomain(
   steps.push({ step: "开启 Email Routing", ok: true });
 
   // 3. Catch-all → 本 Worker（先备份原有规则）
+  const worker = await workerName(env);
   try {
     const prev = await cf.get<{ actions: { type: string; value?: string[] }[]; matchers: unknown[]; enabled: boolean; name?: string }>(
       `/zones/${zoneId}/email/routing/rules/catch_all`,
     ).catch(() => null);
-    const ours = prev?.actions?.some((a) => a.type === "worker" && a.value?.includes(env.WORKER_NAME));
+    const ours = prev?.actions?.some((a) => a.type === "worker" && a.value?.includes(worker));
     if (prev && !ours) await setSetting(env, `catchall_backup:${zoneId}`, JSON.stringify(prev));
     await cf.put(`/zones/${zoneId}/email/routing/rules/catch_all`, {
       name: "cf-mailbox catch-all",
       enabled: true,
       matchers: [{ type: "all" }],
-      actions: [{ type: "worker", value: [env.WORKER_NAME] }],
+      actions: [{ type: "worker", value: [worker] }],
     });
-    steps.push({ step: "开启 Catch-all", ok: true, detail: `*@${domain} → ${env.WORKER_NAME}` });
+    steps.push({ step: "开启 Catch-all", ok: true, detail: `*@${domain} → ${worker}` });
   } catch (e: any) {
     steps.push({ step: "开启 Catch-all", ok: false, detail: e.message });
     return { ok: false, domain, steps };
@@ -488,7 +489,8 @@ export async function checkHealth(env: Env, cf: Cf, domain: string): Promise<Hea
   });
 
   const catchAll = await cf.get<{ enabled: boolean; actions: { type: string; value?: string[] }[] }>(`/zones/${z}/email/routing/rules/catch_all`).catch(() => null);
-  const caOk = Boolean(catchAll?.enabled && catchAll.actions?.some((a) => a.type === "worker" && a.value?.includes(env.WORKER_NAME)));
+  const worker = await workerName(env);
+  const caOk = Boolean(catchAll?.enabled && catchAll.actions?.some((a) => a.type === "worker" && a.value?.includes(worker)));
   items.push({ key: "catchall", label: "Catch-all → 本应用", ok: caOk, detail: caOk ? "正常" : "未指向本 Worker", fixable: true });
 
   const txt = await cf.dnsRecords(z, "TXT", domain).catch(() => []);
@@ -542,7 +544,7 @@ export async function fixHealth(env: Env, cf: Cf, domain: string): Promise<Healt
       name: "cf-mailbox catch-all",
       enabled: true,
       matchers: [{ type: "all" }],
-      actions: [{ type: "worker", value: [env.WORKER_NAME] }],
+      actions: [{ type: "worker", value: [await workerName(env)] }],
     });
   }
   if (bad.has("dmarc")) {

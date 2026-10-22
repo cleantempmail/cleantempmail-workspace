@@ -69,6 +69,8 @@ export function renderLogin(root) {
 
 // ---------- 首次配置 ----------
 export function renderSetup(root) {
+  // 在浏览器里随机生成，不经过服务器
+  const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
   const code = (s) => `<div class="code"><code>${esc(s)}</code><button class="icon-btn xs" data-copy="${esc(s)}" title="复制" aria-label="复制">${icon("check", "copied")}<span class="copy-ic">${icon("draft")}</span></button></div>`;
   root.innerHTML = `
   <div class="setup-page">
@@ -84,6 +86,7 @@ export function renderSetup(root) {
         <li><b>勾选权限</b><div class="scope-list">${store.me.scopes.map((s) => `<code>${esc(s)}</code>`).join("")}</div>
           <span>可选：再勾选 ${store.me.optionalScopes.map((s) => `<code>${esc(s)}</code>`).join(" ")}，用于显示外发邮件的投递状态（已送达 / 退信）。</span></li>
         <li><b>保存 Client ID 与 Secret</b><span>Workers → 本 Worker → Settings → Runtime variables and secrets，添加两个 <b>Secret</b> 类型变量，然后部署：</span>${code("CF_OAUTH_CLIENT_ID")}${code("CF_OAUTH_CLIENT_SECRET")}</li>
+        <li><b>推荐：设置加密密钥</b><span>在同一个地方再添加一个名为 <code>APP_SECRET</code> 的 Secret，值可以直接用下面这串随机生成的密钥。登录凭据和 API Key 会用它加密，密钥与数据库分开存放。设置后不要修改或删除。</span>${code("APP_SECRET")}${code(secret)}</li>
       </ol>
       <button class="btn primary" data-reload>${icon("refresh")}我已设置完成，刷新</button>
     </div>

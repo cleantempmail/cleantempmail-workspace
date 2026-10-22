@@ -4,7 +4,7 @@ import { Cf } from "./cf";
 import type { AppEnv, Env, Session } from "./env";
 import { sendVia, type Provider } from "./providers";
 import { FULL, parseScope } from "./scope";
-import { decrypt, domainOf, encrypt, getSetting, isEmail, now, randomId, setSetting, sha256hex } from "./util";
+import { decrypt, domainOf, encrypt, getSetting, isEmail, now, randomId, setSetting, sha256hex, workerName } from "./util";
 
 const AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
@@ -368,14 +368,19 @@ export async function workerAccountId(env: Env, cf: Cf): Promise<string> {
   const cached = await getSetting(env, "account_id");
   if (cached) return cached;
   const accounts = await cf.accounts();
+  const names = [...new Set([await workerName(env), env.WORKER_NAME])];
   for (const a of accounts) {
-    if (await cf.workerExists(a.id, env.WORKER_NAME).catch(() => false)) {
-      await setSetting(env, "account_id", a.id);
-      return a.id;
+    for (const name of names) {
+      if (await cf.workerExists(a.id, name).catch(() => false)) {
+        await setSetting(env, "account_id", a.id);
+        return a.id;
+      }
     }
   }
   if (accounts.length === 1) return accounts[0].id; // 本地开发时 Worker 尚未部署
-  throw new Error(`在你授权的账户中没有找到名为 ${env.WORKER_NAME} 的 Worker，请授权部署了本应用的那个账户`);
+  throw new Error(
+    `在你授权的账户中没有找到名为 ${names.join(" 或 ")} 的 Worker。请授权部署了本应用的那个账户；如果部署时改了 Worker 名称，请先通过 workers.dev 地址打开一次本应用，或把变量 WORKER_NAME 改成新名称`,
+  );
 }
 
 export async function purgeExpiredSessions(env: Env): Promise<void> {

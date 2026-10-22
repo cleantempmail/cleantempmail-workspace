@@ -4,10 +4,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  // 自定义域名（Cloudflare 自动创建 DNS 记录和证书）；改成你自己的域名
-  "routes": [{ "pattern": "web.cleantempmail.com", "custom_domain": true }],
-  // 停用 *.workers.dev 地址和预览地址，只通过自定义域名访问
-  "workers_dev": false,
+  // 默认通过 https://<name>.<你的子域>.workers.dev 访问。
+  // 想用自己的域名：在 wrangler.local.jsonc（不提交到 git）里写 routes，见 README「设置访问域名」；
+  // 一键部署的用户也可以在控制台 Worker → Settings → Domains & Routes 添加自定义域名
+  "workers_dev": true,
   "preview_urls": false,
   "assets": {
     "directory": "./public",
@@ -22,7 +22,8 @@
   // 不加限制：可以从任何已开通 Email Sending 的域名发给任意收件人
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
-    // 必须与上面的 name 一致：catch-all 规则会把邮件投递给这个 Worker
+    // Worker 名称（catch-all 规则按名称投递邮件）。部署时改了名称也不要紧：
+    // 通过 workers.dev 地址访问时程序会自动识别真实名称
     "WORKER_NAME": "cf-mailbox"
   },
   // 每分钟：定时发送、稍后提醒、投递状态；每天 03:17（UTC）：清理垃圾箱与过期附件

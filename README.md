@@ -4,6 +4,8 @@
 
 [English](README.en.md) · [部署教程](#部署) · [更新](#更新到新版本)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+
 部署在你自己 Cloudflare 账户里的多域名邮箱工作台（与公开的 CleanTempMail 临时邮箱是两个独立产品）。
 
 用 Cloudflare 账户登录，从账户里选域名，一键开通收件和发件：
@@ -70,16 +72,40 @@
 
 ## 部署
 
-整个过程大约 15 分钟。所有资源都创建在你自己的 Cloudflare 账户里。
+所有资源都创建在你自己的 Cloudflare 账户里。两种方式任选其一：**一键部署**不需要在电脑上装任何东西；**命令行部署**适合想自己改代码的人。
 
 ### 准备
 
 - 一个 Cloudflare 账户，要收信的域名已接入 Cloudflare（DNS 托管在 Cloudflare）
-- 在控制台开通一次 **R2**（有免费额度）
-- 本机安装 [Node.js](https://nodejs.org/) 20 或更高版本和 git
+- 在控制台开通一次 **R2**（有免费额度）。不开通的话部署会失败
 - 发件服务二选一（也可以两个都配，互为备用）：
   - **Cloudflare Email Sending**：账户需要 Workers Paid（$5/月）
-  - **Resend**：注册 [resend.com](https://resend.com) 并创建一个 API Key（免费版每天 100 封、每月 3000 封）
+  - **Resend**：注册 [resend.com](https://resend.com) 并创建一个 API Key（免费版每天 100 封、每月 3000 封，最多 3 个域名）
+
+### 方式一：一键部署
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cleantempmail/cleantempmail-workspace)
+
+1. 点上面的按钮，登录 Cloudflare，按提示连接你的 GitHub（或 GitLab）账户
+2. 设置仓库名、Worker 名称和数据库 / 存储桶名称，保持默认即可，然后点部署。Cloudflare 会把代码复制一份到你的 GitHub，自动创建 D1 数据库和 R2 存储桶，完成部署和建表
+3. 打开部署好的地址 `https://<Worker 名称>.<你的子域>.workers.dev`。页面会一步步引导你创建 OAuth 客户端：Redirect URL 和权限都可以一键复制；Client ID、Client Secret 和推荐的 `APP_SECRET` 填到这个 Worker 的 **Settings → Runtime variables and secrets**（类型选 Secret）
+4. 刷新页面，用 Cloudflare 登录，添加域名（同下面的[第 6 步](#第-6-步登录并添加域名)）
+
+想用自己的域名访问：控制台打开这个 Worker → **Settings → Domains & Routes → Add → Custom domain**。
+
+**以后更新**：复制到你 GitHub 的仓库不会自动同步本仓库的新版本。在你自己的仓库里执行下面的命令，推送后 Cloudflare 会自动重新部署，并自动更新数据库结构：
+
+```bash
+git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # 只需一次
+git pull upstream main
+git push
+```
+
+如果 `wrangler.jsonc` 出现冲突，保留你自己的 `name` 和 `database_id`。
+
+### 方式二：命令行部署
+
+需要本机安装 [Node.js](https://nodejs.org/) 20 或更高版本和 git。
 
 ### 第 1 步：获取代码
 
@@ -89,23 +115,23 @@ cd cleantempmail-workspace
 npm install
 ```
 
-### 第 2 步：设置访问域名
+### 第 2 步（可选）：使用自己的域名
 
-打开 `wrangler.jsonc`，把 `routes` 里的 `web.cleantempmail.com` 改成你自己的访问地址，例如 `mail.example.com`（必须是你账户里某个域名的子域名，Cloudflare 会自动创建 DNS 记录和证书）：
+默认部署后通过 `https://cf-mailbox.<你的子域>.workers.dev` 访问。想用自己的域名，复制示例文件：
 
-```jsonc
-"routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
+```bash
+cp wrangler.local.example.jsonc wrangler.local.jsonc
 ```
 
-不想用自己的域名的话，删掉 `routes` 这一行，并把 `workers_dev` 改成 `true`，部署后会得到一个 `https://cf-mailbox.<你的子域>.workers.dev` 地址。
+把里面的 `mail.example.com` 改成你的访问地址（必须是你账户里某个域名的子域名，Cloudflare 会自动创建 DNS 记录和证书）。这个文件不提交到 git，`npm run deploy` 时会自动覆盖 `wrangler.jsonc` 里的同名字段，以后 `git pull` 更新也不会冲突。
 
-> 其他配置保持默认即可。如果要改 Worker 名称 `name`，`vars.WORKER_NAME` 也要改成一样的（Catch-all 规则按这个名字把邮件投递给 Worker）。
+也可以先用 workers.dev 地址部署，之后在控制台 Worker → **Settings → Domains & Routes** 添加自定义域名。
 
 ### 第 3 步：部署
 
 ```bash
 npx wrangler login     # 浏览器里授权 wrangler 访问你的账户
-npm run deploy         # 部署 Worker，自动创建 D1 数据库和 R2 存储桶，然后建表
+npm run deploy         # 首次部署：自动创建 D1 数据库和 R2 存储桶，部署 Worker，然后建表
 ```
 
 ### 第 4 步：设置加密密钥（推荐）

@@ -2,6 +2,9 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "推荐：设置加密密钥": "Recommended: set an encryption key",
+  "在同一个地方再添加一个名为": "In the same place, add another Secret named",
+  "的 Secret，值可以直接用下面这串随机生成的密钥。登录凭据和 API Key 会用它加密，密钥与数据库分开存放。设置后不要修改或删除。": "and use the randomly generated key below as its value. Sign-in credentials and API keys are encrypted with it, and the key is stored separately from the database. Don't change or delete it afterwards.",
   "回复和转发的引用语言": "Quote language for replies and forwards",
   "引用原文时插入的「…写道：」和转发信息用哪种语言。「跟随原邮件」会根据原邮件的文字自动选择：回复英文邮件用英文，回复中文邮件用中文": "The language of the “… wrote:” line and the forwarded-message header. “Match the original” picks it from the original email's text: English for English emails, Chinese for Chinese emails",
   "跟随原邮件": "Match the original",
