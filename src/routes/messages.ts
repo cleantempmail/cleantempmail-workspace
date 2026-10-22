@@ -332,7 +332,7 @@ messages.post("/messages/:id/action", async (c) => {
   return c.json({ ok: true });
 });
 
-// 清空垃圾箱 / 垃圾邮件：每次最多处理 200 封，前端循环调用直到 remaining = 0
+// 清空废纸篓 / 垃圾邮件：每次最多处理 200 封，前端循环调用直到 remaining = 0
 messages.post("/trash/empty", async (c) => {
   const s = c.get("session");
   const { which = "trash" } = await c.req.json<{ which?: "trash" | "spam" }>().catch(() => ({ which: "trash" as const }));

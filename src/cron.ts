@@ -43,7 +43,7 @@ async function wakeSnoozed(env: Env): Promise<void> {
 }
 
 export async function daily(env: Env): Promise<void> {
-  // 垃圾箱和垃圾邮件超过 30 天的彻底删除
+  // 废纸篓和垃圾邮件超过 30 天的彻底删除
   const cutoff = now() - 30 * 86400;
   const { results } = await env.DB.prepare(
     "SELECT id FROM messages WHERE (deleted_at IS NOT NULL AND deleted_at < ?) OR (spam = 1 AND deleted_at IS NULL AND created_at < ?) LIMIT 300",
