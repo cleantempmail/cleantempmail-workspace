@@ -7,6 +7,7 @@ export interface Env {
   WORKER_NAME: string;
   // 可选：用于加密 token / API Key 的密钥（Worker Secret），与 D1 数据分开存放
   APP_SECRET?: string;
+  RESEND_API_BASE?: string; // 仅本地测试：把 Resend 接口指向模拟服务
   // 用 `wrangler secret put` 设置，见 README
   CF_OAUTH_CLIENT_ID?: string;
   CF_OAUTH_CLIENT_SECRET?: string;

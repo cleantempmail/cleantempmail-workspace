@@ -2,8 +2,8 @@ import { Hono } from "hono";
 import { cfClient, loadSession, OPTIONAL_SCOPES, oauthConfigured, requireAdmin, requireSession, ReauthError, SCOPES, sessionTokenScope, workerAccountId } from "./auth";
 import type { AppEnv } from "./env";
 import { serveProxiedImage } from "./privacy";
-import { SendError, type Provider } from "./providers";
-import { checkHealth, fixHealth, provisionDomain, refreshSendStatus, removeDomain, setFallback, setupSending } from "./provision";
+import { RESEND_FREE_DOMAINS, resendKey, SendError, type Provider } from "./providers";
+import { checkHealth, fixHealth, provisionDomain, refreshSendStatus, releaseResend, removeDomain, resendUsage, setFallback, setupSending } from "./provision";
 import { compose, HttpError, LIMITS } from "./routes/compose";
 import { messages } from "./routes/messages";
 import { org } from "./routes/org";
@@ -104,6 +104,17 @@ api.post("/domains/:name/fallback", requireAdmin, async (c) => {
   return c.json(await setFallback(c.env, cf, c.req.param("name")!, Boolean(enabled)));
 });
 
+// 释放 Resend 名额：从 Resend 删除这个域名。Cloudflare 授权过期时仍然删除，只是跳过 DNS 清理
+api.post("/domains/:name/resend/release", requireAdmin, async (c) => {
+  const cf = await cfClient(c).catch(() => null);
+  return c.json(await releaseResend(c.env, cf, c.req.param("name")!));
+});
+
+api.get("/resend/domains", requireAdmin, async (c) => {
+  if (!(await resendKey(c.env))) return c.json({ configured: false, domains: [], freeLimit: RESEND_FREE_DOMAINS });
+  return c.json({ configured: true, domains: await resendUsage(c.env), freeLimit: RESEND_FREE_DOMAINS });
+});
+
 api.post("/domains/:name/refresh", requireAdmin, async (c) => {
   await refreshSendStatus(c.env, c.req.param("name")!);
   return c.json({ ok: true });
@@ -118,7 +129,8 @@ api.post("/domains/:name/fix", requireAdmin, async (c) => {
 });
 
 api.delete("/domains/:name", requireAdmin, async (c) => {
-  return c.json({ ok: true, ...(await removeDomain(c.env, await cfClient(c), c.req.param("name")!)) });
+  const releaseResend = c.req.query("resend") === "1";
+  return c.json({ ok: true, ...(await removeDomain(c.env, await cfClient(c), c.req.param("name")!, { releaseResend })) });
 });
 
 // ---------- 设置 ----------

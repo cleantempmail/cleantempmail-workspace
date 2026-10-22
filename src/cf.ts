@@ -74,7 +74,7 @@ export class Cf {
   }
 
   dnsRecords(zoneId: string, type: string, name: string) {
-    return this.get<{ id: string; type: string; name: string; content: string; priority?: number }[]>(
+    return this.get<{ id: string; type: string; name: string; content: string; priority?: number; comment?: string | null }[]>(
       `/zones/${zoneId}/dns_records?type=${type}&name=${encodeURIComponent(name)}&per_page=100`,
     );
   }

@@ -1,7 +1,7 @@
 // 一键配置域名：开启 Email Routing → catch-all 投递到本 Worker → 开通发件
 import { Cf } from "./cf";
 import type { Env } from "./env";
-import { resendApi, resendFindOrCreateDomain, resendKey, resendRecordFqdn, type Provider } from "./providers";
+import { resendApi, resendDomains, resendFindOrCreateDomain, resendKey, resendRecordFqdn, type Provider, type ResendDomain } from "./providers";
 import { getSetting, now, setSetting } from "./util";
 
 export interface Step {
@@ -118,6 +118,7 @@ export async function setupSending(
   const keepPrev = Boolean(prefer && prev && prev.send_provider !== "none" && prev.send_provider !== prefer && prev.send_status !== "error");
   const order: Provider[] =
     prefer === "resend" ? ["resend"] : prefer === "cloudflare" ? ["cloudflare"] : ["cloudflare", "resend"];
+  let cfFailure: string | null = null;
 
   for (const p of order) {
     if (p === "cloudflare") {
@@ -131,6 +132,7 @@ export async function setupSending(
         await saveSending(env, domain, "cloudflare", r.status, r.step.detail ?? null, null, prev);
         return steps;
       }
+      cfFailure = r.step.detail ?? null;
       if (!keepPrev) await saveSending(env, domain, "none", "error", r.step.detail ?? null, null, prev);
     } else {
       if (!hasResend) {
@@ -152,6 +154,8 @@ export async function setupSending(
         return steps;
       } catch (e: any) {
         steps.push({ step: "开通 Resend 发件", ok: false, detail: e.message });
+        const why = /^Resend/.test(e.message) ? e.message : `Resend：${e.message}`;
+        if (!keepPrev) await saveSending(env, domain, "none", "error", cfFailure ? `Cloudflare：${cfFailure}；${why}` : why, null, prev);
       }
     }
   }
@@ -236,7 +240,7 @@ export async function setFallback(
       detail = r.detail;
       meta = JSON.stringify({ resendDomainId: r.id });
     } catch (e: any) {
-      return { ok: false, detail: `Resend：${e.message}` };
+      return { ok: false, detail: /^Resend/.test(e.message) ? e.message : `Resend：${e.message}` };
     }
   }
   if (status === "error") return { ok: false, detail };
@@ -279,21 +283,26 @@ async function setupCloudflareSending(
   }
 }
 
+const RESEND_COMMENT = "cf-mailbox: Resend";
+const unquote = (v: string) => v.replace(/^"|"$/g, "");
+
 async function setupResendSending(env: Env, cf: Cf, domain: string, zoneId: string) {
   const d = await resendFindOrCreateDomain(env, domain);
   let created = 0;
   for (const rec of d.records ?? []) {
     const fqdn = resendRecordFqdn(domain, rec.name);
     const existing = await cf.dnsRecords(zoneId, rec.type, fqdn);
-    const same = existing.some((r) => r.content.replace(/^"|"$/g, "") === rec.value.replace(/^"|"$/g, ""));
+    const same = existing.some((r) => unquote(r.content) === unquote(rec.value));
     if (same) continue;
+    // 以前接入 Resend 时留下的旧记录（重新添加后 DKIM 密钥会变）先删掉，避免同名多条导致签名验证失败
+    for (const r of existing) if (r.comment === RESEND_COMMENT) await cf.del(`/zones/${zoneId}/dns_records/${r.id}`);
     await cf.post(`/zones/${zoneId}/dns_records`, {
       type: rec.type,
       name: fqdn,
       content: rec.value,
       ttl: 1,
       ...(rec.type === "MX" ? { priority: rec.priority ?? 10 } : {}),
-      comment: "cf-mailbox: Resend",
+      comment: RESEND_COMMENT,
     });
     created++;
   }
@@ -328,6 +337,81 @@ export async function refreshSendStatus(env: Env, domain: string): Promise<void>
   }
 }
 
+// ---------- 释放 Resend 名额 ----------
+// Resend 没有"停用"状态，只能删除域名。顺带删掉本应用写入的 Resend DNS 记录，
+// 主发件是 Resend 时：有可用的备用服务就把它提为主服务，否则这个域名改为"未开通"。
+export async function releaseResend(env: Env, cf: Cf | null, domain: string): Promise<{ ok: boolean; detail: string; warning?: boolean }> {
+  const row = await env.DB.prepare("SELECT zone_id, send_provider, fallback_provider, fallback_status, fallback_detail, fallback_meta FROM domains WHERE name = ?")
+    .bind(domain)
+    .first<{ zone_id: string; send_provider: Provider; fallback_provider: Provider | null; fallback_status: string | null; fallback_detail: string | null; fallback_meta: string | null }>();
+  const found = (await resendDomains(env)).find((d) => d.name === domain);
+  let removed = 0;
+  let note = "";
+  if (found) {
+    // 删除前先取到它要求的 DNS 记录
+    const full = await resendApi<ResendDomain>(env, "GET", `/domains/${found.id}`).catch(() => found);
+    await resendApi(env, "DELETE", `/domains/${found.id}`);
+    if (row && cf) {
+      removed = await removeResendDns(cf, row.zone_id, domain, full.records ?? []).catch((e) => {
+        note = `，但 DNS 记录未能清理（${e.message}）`;
+        return 0;
+      });
+    } else if (row) note = "。DNS 记录需要重新登录 Cloudflare 后才能清理";
+  }
+  let after = "";
+  if (row?.send_provider === "resend") {
+    const promote = row.fallback_provider && row.fallback_provider !== "resend" && row.fallback_status && row.fallback_status !== "error";
+    await env.DB.prepare(
+      `UPDATE domains SET send_provider = ?, send_status = ?, send_detail = ?, send_meta = ?,
+         fallback_provider = NULL, fallback_status = NULL, fallback_detail = NULL, fallback_meta = NULL, updated_at = ? WHERE name = ?`,
+    )
+      .bind(
+        promote ? row.fallback_provider : "none",
+        promote ? row.fallback_status : "none",
+        promote ? row.fallback_detail : "已停用 Resend 发件",
+        promote ? row.fallback_meta : null,
+        now(),
+        domain,
+      )
+      .run();
+    after = promote ? "，之后改用 Cloudflare 发件" : "，这个域名暂时只能收信";
+  } else if (row?.fallback_provider === "resend") {
+    await env.DB.prepare("UPDATE domains SET fallback_provider = NULL, fallback_status = NULL, fallback_detail = NULL, fallback_meta = NULL, updated_at = ? WHERE name = ?")
+      .bind(now(), domain)
+      .run();
+    after = "，已关闭备用发件";
+  }
+  if (!found) return { ok: true, detail: `${domain} 不在 Resend 账户中${after}` };
+  return { ok: true, detail: `已从 Resend 删除 ${domain}，释放了 1 个名额${removed ? `，清理了 ${removed} 条 DNS 记录` : ""}${after}${note}`, warning: Boolean(note) };
+}
+
+// 删除 Resend 要求的记录（内容一致的），以及本应用以前写入的同名旧记录
+export async function removeResendDns(cf: Cf, zoneId: string, domain: string, records: { name: string; type: string; value: string }[]): Promise<number> {
+  const done = new Set<string>();
+  for (const rec of records) {
+    const existing = await cf.dnsRecords(zoneId, rec.type, resendRecordFqdn(domain, rec.name));
+    for (const r of existing) {
+      if (done.has(r.id) || (unquote(r.content) !== unquote(rec.value) && r.comment !== RESEND_COMMENT)) continue;
+      await cf.del(`/zones/${zoneId}/dns_records/${r.id}`);
+      done.add(r.id);
+    }
+  }
+  return done.size;
+}
+
+// Resend 账户里的域名及其在本应用中的用途（设置页显示名额用量）
+export async function resendUsage(env: Env) {
+  const [list, { results }] = await Promise.all([
+    resendDomains(env),
+    env.DB.prepare("SELECT name, send_provider, fallback_provider FROM domains").all<{ name: string; send_provider: Provider; fallback_provider: Provider | null }>(),
+  ]);
+  const app = new Map(results.map((r) => [r.name, r]));
+  return list.map((d) => {
+    const r = app.get(d.name);
+    return { name: d.name, status: d.status, inApp: Boolean(r), usage: r?.send_provider === "resend" ? "primary" : r?.fallback_provider === "resend" ? "backup" : null };
+  });
+}
+
 // 定时任务：Resend 域名验证是异步的，自动刷新还在验证中的域名
 export async function refreshPendingSending(env: Env): Promise<void> {
   const { results } = await env.DB.prepare(
@@ -337,9 +421,16 @@ export async function refreshPendingSending(env: Env): Promise<void> {
 }
 
 // 从本应用移除域名：关闭 catch-all（不删除 MX，避免影响其他规则）
-export async function removeDomain(env: Env, cf: Cf | null, domain: string): Promise<{ restored: boolean }> {
+export async function removeDomain(env: Env, cf: Cf | null, domain: string, opts: { releaseResend?: boolean } = {}): Promise<{ restored: boolean; resend?: string }> {
   const row = await env.DB.prepare("SELECT zone_id FROM domains WHERE name = ?").bind(domain).first<{ zone_id: string }>();
   if (!row) return { restored: false };
+  let resend: string | undefined;
+  if (opts.releaseResend && (await resendKey(env))) {
+    resend = await releaseResend(env, cf, domain).then(
+      (r) => r.detail,
+      (e) => `Resend 名额未能释放：${e.message}`,
+    );
+  }
   let restored = false;
   if (cf) {
     // 恢复配置前的 catch-all 规则；没有备份就停用
@@ -358,7 +449,7 @@ export async function removeDomain(env: Env, cf: Cf | null, domain: string): Pro
     }
   }
   await env.DB.prepare("DELETE FROM domains WHERE name = ?").bind(domain).run();
-  return { restored };
+  return { restored, resend };
 }
 
 // ---------- 域名健康检查 ----------

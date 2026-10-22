@@ -1080,3 +1080,11 @@ button.sb-empty { width: calc(100% - 4px); background: none; cursor: pointer; te
 @media print {
   .ai-summary, .thread-banner, .resizer { display: none !important; }
 }
+
+/* 确认框里的勾选项、Resend 名额 */
+.dialog-check { display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; font-size: 13.5px; color: var(--text-2); cursor: pointer; }
+.dialog-check input { margin-top: 3px; accent-color: var(--accent); }
+.dialog-text span + span { margin-left: .25em; }
+.resend-usage .usage-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.resend-usage .usage-head b { margin-bottom: 0; }
+.resend-usage .id-list { border-top: 0; }

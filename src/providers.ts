@@ -89,7 +89,7 @@ export async function sendVia(env: Env, provider: Provider, m: Outgoing): Promis
   if (provider === "resend") {
     const key = await resendKey(env);
     if (!key) throw new SendError("尚未配置 Resend API Key", "missing_api_key", true);
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await fetch(`${env.RESEND_API_BASE ?? "https://api.resend.com"}/emails`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
@@ -143,7 +143,7 @@ interface ResendDomain {
 export async function resendApi<T = any>(env: Env, method: string, path: string, body?: unknown): Promise<T> {
   const key = await resendKey(env);
   if (!key) throw new Error("尚未配置 Resend API Key");
-  const res = await fetch("https://api.resend.com" + path, {
+  const res = await fetch((env.RESEND_API_BASE ?? "https://api.resend.com") + path, {
     method,
     headers: { Authorization: `Bearer ${key}`, ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
@@ -153,11 +153,29 @@ export async function resendApi<T = any>(env: Env, method: string, path: string,
   return data as T;
 }
 
+export async function resendDomains(env: Env): Promise<ResendDomain[]> {
+  return (await resendApi<{ data: ResendDomain[] }>(env, "GET", "/domains")).data ?? [];
+}
+
+// Resend 按账户里的域名数计算名额（不论是否验证通过），免费版最多 3 个
+export const RESEND_FREE_DOMAINS = 3;
+
 export async function resendFindOrCreateDomain(env: Env, domain: string): Promise<ResendDomain> {
-  const list = await resendApi<{ data: ResendDomain[] }>(env, "GET", "/domains");
-  const existing = list.data.find((d) => d.name === domain);
+  const list = await resendDomains(env);
+  const existing = list.find((d) => d.name === domain);
   if (existing) return resendApi<ResendDomain>(env, "GET", `/domains/${existing.id}`);
-  return resendApi<ResendDomain>(env, "POST", "/domains", { name: domain });
+  try {
+    return await resendApi<ResendDomain>(env, "POST", "/domains", { name: domain });
+  } catch (e: any) {
+    const msg = String(e.message);
+    const limitLike = /limit|maxim|plan|upgrade|exceed/i.test(msg);
+    if (!limitLike && list.length < RESEND_FREE_DOMAINS) throw e;
+    throw new Error(
+      `${limitLike ? "Resend 域名名额已满" : msg}。Resend 里现有 ${list.length} 个域名：${list.map((d) => d.name).join("、")}。` +
+        `免费版最多 ${RESEND_FREE_DOMAINS} 个，可以在不常用的域名菜单里选「停用 Resend 发件」释放名额，或升级 Resend 套餐` +
+        (limitLike ? `（${msg}）` : ""),
+    );
+  }
 }
 
 export function resendRecordFqdn(domain: string, name: string): string {

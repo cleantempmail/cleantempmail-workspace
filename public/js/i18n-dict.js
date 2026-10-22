@@ -2,6 +2,25 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "停用 Resend 发件（释放名额）": "Stop sending with Resend (free up a slot)",
+  "停用并释放": "Stop and free up",
+  "将从 Resend 删除这个域名（释放 1 个名额），并删除本应用写入的 Resend DNS 记录。": "This deletes the domain from Resend (freeing 1 slot) and removes the Resend DNS records this app added.",
+  "之后这个域名改用 Cloudflare 发件。": "Afterwards this domain sends with Cloudflare.",
+  "之后这个域名只能收信、不能发信，直到重新开通发件服务。": "Afterwards this domain can receive but not send until sending is set up again.",
+  "这个域名的备用发件会关闭。": "Backup sending for this domain will be turned off.",
+  "以后可以随时重新开通，DNS 记录会自动重新写入。": "You can set it up again any time; the DNS records are written again automatically.",
+  "同时从 Resend 删除这个域名（释放名额）": "Also delete this domain from Resend (free up a slot)",
+  "Resend 域名名额": "Resend domain slots",
+  "本应用 · 主发件": "This app · primary sending",
+  "本应用 · 备用发件": "This app · backup sending",
+  "本应用没有用它发件，但仍占用名额": "Not used for sending by this app, but still takes a slot",
+  "不在本应用中（可能被其他项目使用，请在 Resend 后台管理）": "Not in this app (another project may use it; manage it in the Resend dashboard)",
+  "释放": "Free up",
+  "未验证": "Not verified",
+  "验证失败": "Verification failed",
+  "暂时失败": "Temporary failure",
+  "正在读取 Resend 里的域名…": "Loading domains from Resend…",
+  "已停用 Resend 发件": "Resend sending stopped",
   "备用": "Backup",
   "备用：": "Backup: ",
   "未启用": "Off",
@@ -826,7 +845,28 @@ export const EXACT = {
 };
 
 // Tried in order when there is no EXACT match; first match wins.
+// 释放 Resend 名额后的附加说明
+const releaseAfter = (after) =>
+  ({ "，之后改用 Cloudflare 发件": ", now sending with Cloudflare", "，这个域名暂时只能收信": ", this domain can only receive for now", "，已关闭备用发件": ", backup sending turned off" })[after] ?? "";
+
 export const PATTERNS = [
+  [/^停用 (.+) 的 Resend 发件？$/, "Stop sending with Resend for $1?"],
+  [/^正在从 Resend 删除 (.+)…$/, "Deleting $1 from Resend…"],
+  [/^已用 (\d+) 个，免费版上限 (\d+) 个(，已满)?$/, (_m, n, max, full) => `${n} used, free plan limit ${max}${full ? " (full)" : ""}`],
+  [/^读取 Resend 域名失败：(.+)$/, "Couldn't load domains from Resend: $1"],
+  [/^Resend 名额未能释放：(.+)$/, "Couldn't free up the Resend slot: $1"],
+  [/^(\S+) 不在 Resend 账户中(.*)$/, (_m, d, after) => `${d} isn't in the Resend account${releaseAfter(after)}`],
+  [
+    /^已从 Resend 删除 (\S+)，释放了 1 个名额(?:，清理了 (\d+) 条 DNS 记录)?(，之后改用 Cloudflare 发件|，这个域名暂时只能收信|，已关闭备用发件)?(?:。DNS 记录需要重新登录 Cloudflare 后才能清理|，但 DNS 记录未能清理（(.*)）)?$/,
+    (m, d, n, after, err) =>
+      `Deleted ${d} from Resend and freed 1 slot${n ? `, removed ${n} DNS record(s)` : ""}${releaseAfter(after)}` +
+      (err !== undefined ? `, but the DNS records couldn't be removed (${err})` : m.includes("重新登录") ? ". Sign in to Cloudflare again to remove the DNS records" : ""),
+  ],
+  [
+    /^Resend 域名名额已满。Resend 里现有 (\d+) 个域名：(.+?)。免费版最多 (\d+) 个，可以在不常用的域名菜单里选「停用 Resend 发件」释放名额，或升级 Resend 套餐(?:（(.+)）)?$/,
+    (_m, n, list, max, raw) =>
+      `Resend domain slots are full. Resend has ${n} domains: ${list.replace(/、/g, ", ")}. The free plan allows ${max}; free one up with "Stop sending with Resend" in the menu of a domain you rarely use, or upgrade your Resend plan${raw ? ` (${raw})` : ""}`,
+  ],
   [/^正在为 (.+) 配置备用发件…$/, "Setting up backup sending for $1…"],
   [/^已启用备用发件（(.+)），DNS 验证中$/, "Backup sending enabled ($1); DNS verification in progress"],
   [/^已启用备用发件（(.+)）$/, "Backup sending enabled ($1)"],

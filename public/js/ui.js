@@ -101,16 +101,22 @@ export function modal({ title, body, actions = [], wide = false, onClose, classN
   return { el, close, body: bodyEl };
 }
 
-export function confirmDialog({ title, message, confirmLabel = "确定", danger = false }) {
+// checkbox: { label, checked }，关闭时把勾选结果写回 checkbox.checked
+export function confirmDialog({ title, message, confirmLabel = "确定", danger = false, checkbox = null }) {
   return new Promise((resolve) => {
-    modal({
+    const m = modal({
       title,
-      body: `<p class="dialog-text">${message}</p>`,
+      body: `<p class="dialog-text">${message}</p>${
+        checkbox ? `<label class="dialog-check"><input type="checkbox" ${checkbox.checked ? "checked" : ""} /><span>${esc(checkbox.label)}</span></label>` : ""
+      }`,
       actions: [
         { label: "取消", value: false },
         { label: confirmLabel, kind: danger ? "danger-solid" : "primary", value: true },
       ],
-      onClose: (v) => resolve(Boolean(v)),
+      onClose: (v) => {
+        if (checkbox) checkbox.checked = Boolean(m.body.querySelector(".dialog-check input")?.checked);
+        resolve(Boolean(v));
+      },
     });
   });
 }

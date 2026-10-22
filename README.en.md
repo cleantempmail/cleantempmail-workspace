@@ -112,6 +112,7 @@ If the domain already uses another mail provider (e.g. Google Workspace MX recor
 ### 7. Optional
 
 - **Send with Resend**: add your Resend API key under **Settings → Sending**, then choose Resend from the ⋮ menu on the domain card
+- **Resend domain slots**: Resend's free plan allows 3 domains, and every domain in the account takes a slot whether or not it's verified or still used by this app. **Settings → Sending** shows the usage. For a domain you rarely send from, choose "Stop sending with Resend (free up a slot)" in its menu: it's deleted from Resend and its DNS records are removed, so the slot can go to another domain (setting it up again later rewrites the DNS records). Removing a domain offers the same option
 - **Backup sending**: when both services are available, turn on the "Backup" switch on the domain card. If the primary service is out of quota, unverified or failing, mail goes out through the other one; messages over Cloudflare's 5 MB limit also go through Resend
 - **Team members**: invite colleagues under **Settings → Team members**; they sign in with an emailed link and don't need a Cloudflare account
 - **Push notifications**: turn on under **Settings → General** to get new-mail alerts even when the page is closed
@@ -129,6 +130,7 @@ npm run update    # migrates the database first, then deploys, so mail keeps flo
 - **redirect_uri mismatch when signing in**: the OAuth client's Redirect URL must exactly match your app address, including `https://` and `/auth/callback`
 - **Mail isn't arriving**: click "Health check" on the domain card. It checks Email Routing, MX, catch-all, SPF and DMARC and can fix them in one click
 - **Cloudflare sending fails**: usually the account doesn't have Workers Paid. Switch to Resend, or set Resend as the backup
+- **Resend says the domain slots are full**: the free plan allows 3 domains. Free one up (see step 7) or upgrade your Resend plan. With many domains, Workers Paid with Cloudflare sending is simpler: 3,000 emails/month included and no limit on the number of domains
 - **AI features unavailable**: summaries, translation and reply drafts use Workers AI, which has a daily free allowance
 
 ## Plans

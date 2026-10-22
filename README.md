@@ -163,6 +163,7 @@ CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
 ### 第 7 步（可选）
 
 - **用 Resend 发件**：「设置 → 发件服务」填写 Resend API Key，然后在域名卡片右上角 ⋮ 选择 Resend
+- **Resend 域名名额**：Resend 免费版最多 3 个域名，不论是否验证通过、本应用是否还在用都占名额。「设置 → 发件服务」可以看到用量；不常用的域名可以在菜单里选「停用 Resend 发件（释放名额）」，会从 Resend 删除并清理 DNS 记录，腾出名额给别的域名（之后重新开通会自动重新写入 DNS）。移除域名时也可以勾选同时释放
 - **备用发件**：两个服务都可用时，打开域名卡片上的「备用」开关。主服务额度用完、未验证或出错时，自动改用另一个服务发出；邮件超过 Cloudflare 的 5 MB 上限时也会自动改用 Resend
 - **团队成员**：「设置 → 团队成员」邀请同事，用邮箱登录链接登录，不需要 Cloudflare 账户
 - **推送通知**：「设置 → 通用」开启后，关掉页面也能收到新邮件通知
@@ -180,6 +181,7 @@ npm run update    # 先更新数据库结构，再部署新代码，更新过程
 - **登录时提示 redirect_uri 不匹配**：OAuth 客户端的 Redirect URL 必须和访问地址完全一致，包括 `https://` 和 `/auth/callback`
 - **收不到邮件**：在域名卡片上点「健康检查」，会逐项检查 Email Routing、MX、Catch-all、SPF、DMARC，并可以一键修复
 - **Cloudflare 发件失败**：通常是账户没有开通 Workers Paid。可以改用 Resend，或把 Resend 设为备用
+- **Resend 提示名额已满**：免费版最多 3 个域名。先释放一个不常用的域名（见第 7 步），或升级 Resend 套餐。域名多的话，开通 Workers Paid 用 Cloudflare 发件更省事：每月含 3,000 封，不限域名数
 - **Workers AI 功能不可用**：AI 摘要、翻译、起草回复使用 Workers AI，有每日免费额度，用完后会提示稍后再试
 
 ## 套餐说明

@@ -4,6 +4,7 @@ import { createEditor } from "./editor.js";
 import { icon } from "./icons.js";
 import { createLabel } from "./list.js";
 import { disablePush, enablePush, pushSupported } from "./push-client.js";
+import { releaseResend } from "./resend.js";
 import { t as tr } from "./i18n.js";
 import { emit, isAdmin, store } from "./store.js";
 import { confirmDialog, modal, toast, toastError } from "./ui.js";
@@ -566,11 +567,14 @@ function sending(body) {
         ${s.resendConfigured ? `<button class="btn danger" data-clear>删除</button>` : ""}
       </div>
       <div class="set-sub muted small">Key 加密后保存在你自己账户的 D1 中${s.appSecret ? "（密钥与数据分开存放）" : ""} · <a href="https://resend.com/api-keys" target="_blank" rel="noopener">获取 API Key</a> · 使用中：${byProvider("resend").map(esc).join("、") || "无"}</div>
+      ${s.resendConfigured ? `<div class="resend-usage" data-usage><div class="set-sub muted small">${icon("loader", "spin")} 正在读取 Resend 里的域名…</div></div>` : ""}
     </section>
     <section class="set-card">
       <div class="set-row"><div><b>系统发件地址</b><span>团队成员的登录链接、邀请邮件从这个地址发出。留空时自动使用第一个已开通发件的域名的 noreply@。</span></div></div>
       <div class="form-inline"><input class="input" data-sys value="${esc(s.systemFrom ?? "")}" placeholder="noreply@你的域名" /><button class="btn primary" data-save-sys>保存</button></div>
     </section>`;
+  const usage = body.querySelector("[data-usage]");
+  if (usage) resendUsage(usage, () => sending(body));
   body.querySelector("[data-save]").onclick = async () => {
     const v = body.querySelector("[data-key]").value.trim();
     if (!v) return toast("请输入 API Key", { type: "error" });
@@ -597,6 +601,41 @@ function sending(body) {
       toastError(e);
     }
   };
+}
+
+// Resend 名额用量：Resend 按账户里的域名数计算，不论是否验证通过、本应用是否还在用
+const RESEND_STATUS = { verified: ["ok", "已验证"], pending: ["warn", "验证中"], not_started: ["off", "未验证"], failed: ["err", "验证失败"], temporary_failure: ["warn", "暂时失败"] };
+async function resendUsage(box, refresh) {
+  try {
+    const r = await load("/resend/domains");
+    if (!r.configured) return void (box.hidden = true);
+    const n = r.domains.length;
+    const use = { primary: "本应用 · 主发件", backup: "本应用 · 备用发件" };
+    box.innerHTML = `<div class="set-sub usage-head"><b>Resend 域名名额</b><span class="muted small">已用 ${n} 个，免费版上限 ${r.freeLimit} 个${n >= r.freeLimit ? "，已满" : ""}</span></div>
+      ${
+        n
+          ? `<div class="id-list">${r.domains
+              .map((d) => {
+                const [cls, label] = RESEND_STATUS[d.status] ?? ["off", d.status];
+                return `<div class="id-row"><span class="id-ic">${icon("globe")}</span>
+                  <div class="id-main"><b>${esc(d.name)}</b><span class="muted small">${d.inApp ? (use[d.usage] ?? "本应用没有用它发件，但仍占用名额") : "不在本应用中（可能被其他项目使用，请在 Resend 后台管理）"}</span></div>
+                  <span class="status ${cls}">${esc(label)}</span>
+                  ${d.inApp ? `<button class="btn sm ghost" data-release="${esc(d.name)}">释放</button>` : ""}</div>`;
+              })
+              .join("")}</div>`
+          : ""
+      }`;
+    box.querySelectorAll("[data-release]").forEach(
+      (b) =>
+        (b.onclick = () =>
+          releaseResend(b.dataset.release, () => {
+            cache.delete("/resend/domains");
+            refresh();
+          })),
+    );
+  } catch (e) {
+    box.innerHTML = `<div class="set-sub muted small">读取 Resend 域名失败：${esc(e.message)}</div>`;
+  }
 }
 
 // ---------- 投递与退信 ----------

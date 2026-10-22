@@ -1,6 +1,7 @@
 // 页面：登录、首次配置、域名管理（含健康检查）、地址管理
 import { api } from "./api.js";
 import { icon } from "./icons.js";
+import { releaseResend } from "./resend.js";
 import { emit, isAdmin, store } from "./store.js";
 import { confirmDialog, menu, modal, toast, toastError } from "./ui.js";
 import { $, avatarColor, esc, fmtRelative, h } from "./util.js";
@@ -227,6 +228,7 @@ function domainMenu(anchor, name) {
     { header: "发件服务" },
     { label: "Cloudflare Email Sending", icon: "cloud", active: d.send_provider === "cloudflare", disabled: !store.me.canManage, onClick: () => setSending("cloudflare") },
     { label: "Resend", icon: "send", active: d.send_provider === "resend", disabled: !store.me.canManage, onClick: () => setSending("resend") },
+    ...(d.send_provider === "resend" || d.fallback_provider === "resend" ? [{ label: "停用 Resend 发件（释放名额）", icon: "ban", onClick: () => releaseResend(name) }] : []),
     "-",
     { label: "健康检查", icon: "stethoscope", disabled: !store.me.canManage, onClick: () => healthModal(name) },
     { label: "查看这个域名的邮件", icon: "mail", onClick: () => (location.hash = `#/domain/${encodeURIComponent(name)}`) },
@@ -236,10 +238,15 @@ function domainMenu(anchor, name) {
       danger: true,
       disabled: !store.me.canManage,
       onClick: async () => {
-        if (!(await confirmDialog({ title: `移除 ${name}？`, message: "将恢复配置前的 Catch-all 规则（如果有），之后不再接收新邮件。已收到的邮件会保留。", confirmLabel: "移除", danger: true }))) return;
+        // 用过 Resend 的域名默认一起从 Resend 删除，否则名额会一直被占着
+        const checkbox = store.settings?.resendConfigured
+          ? { label: "同时从 Resend 删除这个域名（释放名额）", checked: d.send_provider === "resend" || d.fallback_provider === "resend" }
+          : null;
+        if (!(await confirmDialog({ title: `移除 ${name}？`, message: "将恢复配置前的 Catch-all 规则（如果有），之后不再接收新邮件。已收到的邮件会保留。", confirmLabel: "移除", danger: true, checkbox }))) return;
         try {
-          const r = await api(`/domains/${encodeURIComponent(name)}`, { method: "DELETE" });
+          const r = await api(`/domains/${encodeURIComponent(name)}${checkbox?.checked ? "?resend=1" : ""}`, { method: "DELETE" });
           toast(r.restored ? `已移除 ${name}，并恢复了原来的 Catch-all 规则` : `已移除 ${name}`);
+          if (r.resend) toast(r.resend, { type: "info", duration: 7000 });
           emit("domains:refresh");
         } catch (e) {
           toastError(e);
