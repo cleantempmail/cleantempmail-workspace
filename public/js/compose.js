@@ -202,7 +202,8 @@ export async function openComposer(prefill = {}, opts = {}) {
     }
     await current.close({ save: true, quiet: true });
   }
-  const mount = opts.mount?.isConnected && innerWidth >= 760 ? opts.mount : null;
+  // 回复方式可在设置里改成弹出窗口
+  const mount = opts.mount?.isConnected && innerWidth >= 760 && prefs.get("replyMode", "inline") === "inline" ? opts.mount : null;
   current = new Composer(prefill, { mount });
 }
 
@@ -288,6 +289,7 @@ class Composer {
         <div class="c-row c-subject"><input class="subject" placeholder="主题" value="${esc(p.subject || "")}" aria-label="主题" /></div>
         <div class="send-warn"></div>
         <div class="editor-slot"></div>
+        <button type="button" class="inline-quote-toggle" title="显示引用内容" aria-label="显示引用内容" aria-pressed="false">${icon("moreH")}</button>
         <div class="c-attachments"></div>
       </div>
       <footer class="composer-foot">
@@ -323,6 +325,13 @@ class Composer {
     }
     this.editor = createEditor({ html, placeholder: "正文", onChange: mark, onFiles: (files) => this.addFiles(files) });
     q(".editor-slot").appendChild(this.editor.el);
+    // 内嵌回复时引用原文默认折叠（发送时仍然包含完整引用）
+    el.classList.toggle("has-quote", Boolean(p.quoteHtml));
+    q(".inline-quote-toggle").onclick = (e) => {
+      const on = el.classList.toggle("show-quote");
+      e.currentTarget.setAttribute("aria-pressed", String(on));
+      if (this.mount) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
 
     this.renderFromName();
     this.renderAttachments();

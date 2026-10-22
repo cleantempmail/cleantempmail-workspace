@@ -1246,10 +1246,17 @@ html[lang="zh-CN"] :is(h1, h2, h3, .thread-subject, .list-title, .page-head h1) 
 .composer.inline .composer-head { height: 44px; border-radius: 14px 14px 0 0; }
 .composer.inline :is([data-act="min"], [data-act="max"]) { display: none; }
 .composer:not(.inline) [data-act="popout"] { display: none; }
+/* 内嵌时：发送栏固定在框的底部；正文区有最大高度，内容多了在框内滚动；引用原文默认折叠 */
 .composer.inline .composer-body { overflow: visible; }
-.composer.inline .editor-slot { min-height: 200px; }
-.composer.inline .editor-area { overflow: visible; }
-.composer.inline .composer-foot { position: sticky; bottom: 0; z-index: 2; background: var(--panel); border-radius: 0 0 14px 14px; }
+.composer.inline .editor-slot { min-height: 0; flex: none; }
+.composer.inline .editor-area { min-height: 140px; max-height: min(38vh, 420px); overflow-y: auto; }
+.composer.inline:not(.show-quote) .editor-area .cfm-quote { display: none; }
+.composer.inline .composer-foot { border-radius: 0 0 14px 14px; }
+.inline-quote-toggle { display: none; }
+.composer.inline.has-quote .inline-quote-toggle { display: inline-grid; place-items: center; align-self: flex-start; margin: 0 0 12px 16px; width: 34px; height: 20px; border: 0; border-radius: 6px; background: var(--hover); color: var(--muted); cursor: pointer; }
+.composer.inline.has-quote .inline-quote-toggle:hover { background: var(--active); color: var(--text); }
+.composer.inline.show-quote .inline-quote-toggle { background: var(--accent-soft); color: var(--accent-text); }
+.inline-quote-toggle .i { width: 16px; height: 16px; }
 
 @media (max-width: 760px) {
   .reader-scroll { padding: 16px 12px 96px; }

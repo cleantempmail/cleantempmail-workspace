@@ -2,6 +2,10 @@
 // Keys are the full trimmed text of a DOM text node or a title / placeholder / aria-label / data-placeholder value.
 // An empty-string value means the text node should be removed.
 export const EXACT = {
+  "回复方式": "Reply style",
+  "在会话中": "In the conversation",
+  "弹出窗口": "Pop-up window",
+  "「在会话中」会在邮件下方直接展开写信框，可随时弹出为独立窗口；「弹出窗口」在右下角打开写信窗口": "“In the conversation” opens the reply right below the email, and you can pop it out into a window at any time; “Pop-up window” opens the composer in the bottom-right corner",
   "在独立窗口中编辑": "Edit in a separate window",
   "快捷导航": "Quick navigation",
   "选中域名，自动配置收发件": "Pick a domain and it's ready to go",
