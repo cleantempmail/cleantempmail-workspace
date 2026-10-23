@@ -956,11 +956,14 @@ const EVENT_TEXT = {
 async function system(body) {
   const st = await api("/system/status");
   const u = st.usage;
+  // 百分比按实际显示（可以超过 100%），进度条最长到满格
   const bar = (used, cap, label) => {
-    const pct = Math.min(100, (used / cap) * 100);
-    return `<div class="usage-row"><span>${label}</span><div class="bar ${pct > 80 ? "warn" : ""}"><i style="width:${Math.max(1, pct)}%"></i></div>
-      <span class="muted small">${used.toLocaleString()} / ${cap.toLocaleString()}（${pct.toFixed(pct < 1 ? 1 : 0)}%）</span></div>`;
+    const pct = (used / cap) * 100;
+    const text = pct < 1 ? pct.toFixed(1) : Math.round(pct).toLocaleString();
+    return `<div class="usage-row"><span>${label}</span><div class="bar ${pct > 80 ? "warn" : ""}"><i style="width:${Math.max(1, Math.min(100, pct))}%"></i></div>
+      <span class="small ${pct > 100 ? "err-text" : "muted"}">${used.toLocaleString()} / ${cap.toLocaleString()}（${text}%）</span></div>`;
   };
+  const over = u && !u.error && (u.d1RowsRead > st.limits.d1RowsRead || u.d1RowsWritten > st.limits.d1RowsWritten || u.workersRequests > st.limits.workersRequests);
   const errs = u && !u.error ? Object.entries(u.scriptErrors) : [];
   const ERR_NAME = { exceededResources: "超出 CPU / 内存限制", scriptThrewException: "程序出错", internalError: "Cloudflare 内部错误" };
   body.innerHTML = `
@@ -984,6 +987,7 @@ async function system(body) {
               ${bar(u.d1RowsWritten, st.limits.d1RowsWritten, "D1 写入行数")}
               ${bar(u.workersRequests, st.limits.workersRequests, "Workers 请求数")}
             </div>
+            ${over ? `<div class="set-sub muted small">已超过免费套餐的每日额度。如果收发仍然正常，说明账户是 Workers 付费套餐，额度按付费套餐计算，不受这里的上限影响。</div>` : ""}
             <div class="set-sub muted small"><span>本应用今天处理了 ${u.scriptRequests.toLocaleString()} 次请求。</span>${errs.map(([k, n]) => ` <span class="status warn">${esc(ERR_NAME[k] ?? k)}：${n} 次</span>`).join("")}</div>`
       }
     </section>

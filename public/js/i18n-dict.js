@@ -248,6 +248,7 @@ export const EXACT = {
   "删除草稿": "Delete draft",
   "我": "Me",
   "发给": "To",
+  "已超过免费套餐的每日额度。如果收发仍然正常，说明账户是 Workers 付费套餐，额度按付费套餐计算，不受这里的上限影响。": "Over the free plan's daily limits. If mail still works, the account is on Workers Paid, which has higher limits than shown here.",
   "导入邮件": "Import mail",
   "支持 mbox（Gmail「Google 数据导出」、Thunderbird、Apple Mail 导出的文件）和 .eml。发件人是你自己域名的邮件放进「已发送」，其他的放进收件地址的收件箱；重复的会自动跳过。": "Supports mbox (from Google Takeout, Thunderbird or Apple Mail) and .eml files. Messages sent from your own domains go to Sent; everything else goes to the inbox of the address it was sent to. Duplicates are skipped.",
   "按收件地址自动归类": "Sort by recipient address",
