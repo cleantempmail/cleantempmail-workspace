@@ -1333,3 +1333,12 @@ html[lang="zh-CN"] :is(h1, h2, h3, .thread-subject, .list-title, .page-head h1) 
 .token-form .form-inline { margin-top: 2px; padding: 0; max-width: none; }
 .auth-card .forgot { margin: 8px 0 0; }
 .reset-form .btn.sm { margin-top: 10px; }
+.att-card.missing { opacity: .75; }
+.att-card.missing .att-size { color: var(--err); }
+/* 导入邮件、系统状态 */
+.import-card .form-inline.wrap { flex-wrap: wrap; align-items: center; padding: 0; }
+.import-card input[type=file] { max-width: 320px; padding: 6px 8px; }
+.check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2, inherit); }
+.import-progress { margin-top: 10px; min-height: 18px; }
+.import-progress .spin { vertical-align: -2px; }
+.err-text { color: var(--err); }

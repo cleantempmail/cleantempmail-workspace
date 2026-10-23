@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   sync:
+    # 只在本仓库运行：一键部署会把这个文件复制到你自己的仓库，那里不需要维护 lite 分支
+    if: github.repository == 'cleantempmail/cleantempmail-workspace'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

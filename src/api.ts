@@ -8,6 +8,7 @@ import { checkHealth, fixHealth, provisionDomain, refreshSendStatus, releaseRese
 import { compose, HttpError, LIMITS } from "./routes/compose";
 import { messages } from "./routes/messages";
 import { org } from "./routes/org";
+import { system } from "./routes/system";
 import { canUseDomain } from "./scope";
 import { encrypt, getSetting, getSettings, isEmail, setSetting } from "./util";
 
@@ -70,6 +71,7 @@ api.route("/", messages);
 api.route("/", compose);
 api.route("/", org);
 api.route("/", account);
+api.route("/", system);
 
 // ---------- 域名 ----------
 

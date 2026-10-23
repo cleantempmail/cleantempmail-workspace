@@ -9,7 +9,7 @@ import { vapidPublicKey } from "../push";
 import { canUseAddress, messageScopeSql, parseScope } from "../scope";
 import { touch } from "../threads";
 import { chunk, domainOf, isEmail, now, placeholders, randomId, sha256hex } from "../util";
-import { blobs, liteUsage, storageMode } from "../storage";
+import { blobs, getMany, liteUsage, storageMode, type StoredObject } from "../storage";
 
 export const org = new Hono<AppEnv>();
 
@@ -302,17 +302,26 @@ org.get("/export.mbox", async (c) => {
   if (mailbox) (where.push("mailbox = ?"), args.push(mailbox));
   const { results } = await c.env.DB.prepare(
     `SELECT id, folder, from_addr, from_name, to_addrs, cc_addrs, subject, message_id, in_reply_to, created_at
-     FROM messages WHERE ${where.join(" AND ")} ORDER BY created_at, id LIMIT ? OFFSET ?`,
+     FROM messages WHERE ${where.join(" AND ")} ORDER BY created_at, rowid LIMIT ? OFFSET ?`,
   ).bind(...args, EXPORT_PAGE, page * EXPORT_PAGE).all<any>();
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const w = writable.getWriter();
   const enc = new TextEncoder();
   c.executionCtx.waitUntil(
     (async () => {
-      for (const m of results) {
+      // 每 50 封批量读取一次（免绑卡模式逐封读取会超过每次 50 次 D1 查询的上限）
+      let objs = new Map<string, StoredObject>();
+      for (const [i, m] of results.entries()) {
+        if (i % 50 === 0) {
+          const part = results.slice(i, i + 50);
+          objs = await getMany(c.env, [
+            ...part.filter((x: any) => x.folder === "inbox").map((x: any) => `msg/${x.id}/raw.eml`),
+            ...part.filter((x: any) => x.folder !== "inbox").map((x: any) => `msg/${x.id}/body.json`),
+          ]);
+        }
         const date = new Date(m.created_at * 1000);
         let raw: string;
-        const obj = m.folder === "inbox" ? await blobs(c.env).get(`msg/${m.id}/raw.eml`) : null;
+        const obj = m.folder === "inbox" ? objs.get(`msg/${m.id}/raw.eml`) : null;
         if (obj) raw = await obj.text();
         else {
           // 发出的邮件没有原文：用保存的内容重建一份纯文本邮件
@@ -330,7 +339,7 @@ org.get("/export.mbox", async (c) => {
             "Content-Type: text/plain; charset=utf-8",
             "Content-Transfer-Encoding: 8bit",
             "",
-            await bodyText(c.env, m.id),
+            await objs.get(`msg/${m.id}/body.json`)?.json<{ text?: string }>().then((b) => b.text ?? "").catch(() => "") ?? "",
           ].join("\n");
         }
         await w.write(enc.encode(`From ${m.from_addr} ${date.toUTCString()}\n${mboxEscape(raw)}\n\n`));
@@ -358,9 +367,10 @@ org.get("/storage", async (c) => {
 // ---------- 投递状态（GraphQL emailSendingAdaptive，需要 OAuth 勾选 analytics.read） ----------
 
 export async function refreshDelivery(env: Env, cf: Cf, ids?: string[]): Promise<{ updated: number }> {
-  const where = ["folder = 'sent'", "provider = 'cloudflare'", "provider_id IS NOT NULL", "delivery_status = 'sent'", "created_at > ?"];
+  // 列名都加上 m. 前缀：domains 表也有 created_at，不加会报"列名有歧义"
+  const where = ["m.folder = 'sent'", "m.provider = 'cloudflare'", "m.provider_id IS NOT NULL", "m.delivery_status = 'sent'", "m.created_at > ?"];
   const args: unknown[] = [now() - 7 * 86400];
-  if (ids?.length) (where.push(`id IN (${placeholders(ids.length)})`), args.push(...ids));
+  if (ids?.length) (where.push(`m.id IN (${placeholders(ids.length)})`), args.push(...ids));
   const { results } = await env.DB.prepare(`SELECT m.id, m.provider_id, m.created_at, d.zone_id FROM messages m JOIN domains d ON d.name = m.domain WHERE ${where.join(" AND ")} LIMIT 200`)
     .bind(...args)
     .all<{ id: string; provider_id: string; created_at: number; zone_id: string }>();
@@ -368,6 +378,7 @@ export async function refreshDelivery(env: Env, cf: Cf, ids?: string[]): Promise
   for (const r of results) byZone.set(r.zone_id, [...(byZone.get(r.zone_id) ?? []), r]);
   let updated = 0;
   const changed: string[] = [];
+  const stmts: D1PreparedStatement[] = [];
   for (const [zone, rows] of byZone) {
     for (const part of chunk(rows, 50)) {
       const variants = part.flatMap((r) => [r.provider_id, r.provider_id.replace(/^<|>$/g, ""), `<${r.provider_id.replace(/^<|>$/g, "")}>`]);
@@ -391,14 +402,19 @@ export async function refreshDelivery(env: Env, cf: Cf, ids?: string[]): Promise
         const last = evs[evs.length - 1];
         const status = ({ delivered: "delivered", deliveryFailed: "bounced", rejected: "rejected", failed: "failed" } as Record<string, string>)[last.status];
         if (!status) continue;
-        await env.DB.prepare("UPDATE messages SET delivery_status = ?, delivery_detail = ? WHERE id = ?")
-          .bind(status, [last.errorCause, last.errorDetail].filter(Boolean).join(" · ") || null, r.id)
-          .run();
+        stmts.push(
+          env.DB.prepare("UPDATE messages SET delivery_status = ?, delivery_detail = ? WHERE id = ?").bind(
+            status,
+            [last.errorCause, last.errorDetail].filter(Boolean).join(" · ") || null,
+            r.id,
+          ),
+        );
         changed.push(r.id);
         updated++;
       }
     }
   }
+  if (stmts.length) await env.DB.batch(stmts);
   if (changed.length) await touch(env, { messageIds: changed });
   return { updated };
 }

@@ -158,7 +158,7 @@ export function menu(anchor, items, { align = "right" } = {}) {
       continue;
     }
     const b = h(`<button class="menu-item ${it.danger ? "danger" : ""} ${it.active ? "active" : ""}" role="menuitem" ${it.disabled ? "disabled" : ""}>
-      ${it.icon ? icon(it.icon) : `<span class="i"></span>`}<span>${esc(it.label)}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ""}${it.active ? icon("check", "menu-check") : ""}
+      ${it.icon ? icon(it.icon) : `<span class="i"></span>`}<span${it.user ? ' class="u"' : ""}>${esc(it.label)}</span>${it.hint ? `<kbd>${esc(it.hint)}</kbd>` : ""}${it.active ? icon("check", "menu-check") : ""}
     </button>`);
     b.onclick = (e) => {
       e.stopPropagation();
@@ -230,7 +230,7 @@ export function labelMenu(anchor, labels, selected, onToggle, onCreate) {
     <div class="menu-header">标签</div>
     <div class="label-items">${
       labels.length
-        ? labels.map((l) => `<label class="menu-item check-item"><input type="checkbox" value="${esc(l.id)}" ${selected.includes(l.id) ? "checked" : ""}/><span class="label-dot" style="--lc:${esc(l.color)}"></span><span>${esc(l.name)}</span></label>`).join("")
+        ? labels.map((l) => `<label class="menu-item check-item"><input type="checkbox" value="${esc(l.id)}" ${selected.includes(l.id) ? "checked" : ""}/><span class="label-dot" style="--lc:${esc(l.color)}"></span><span class="u">${esc(l.name)}</span></label>`).join("")
         : `<div class="menu-empty">还没有标签</div>`
     }</div>
     <div class="menu-sep"></div>

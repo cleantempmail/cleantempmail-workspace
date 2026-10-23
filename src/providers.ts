@@ -15,6 +15,7 @@ export interface Outgoing {
   headers: Record<string, string>;
   attachments: { filename: string; type: string; content: string }[]; // content 为 base64
   idempotencyKey?: string; // 同一草稿重复提交时防止重复发送（Resend 支持）
+  messageId?: string; // 自己生成的 Message-ID（Resend 发件时带上；Cloudflare 会返回它自己的）
 }
 
 // RFC 5322：显示名里有逗号、分号、引号等特殊字符时必须加引号
@@ -104,7 +105,7 @@ export async function sendVia(env: Env, provider: Provider, m: Outgoing): Promis
         subject: m.subject,
         text: m.text,
         html: m.html,
-        headers: m.headers,
+        headers: m.messageId ? { ...m.headers, "Message-ID": m.messageId } : m.headers,
         attachments: m.attachments.length
           ? m.attachments.map((a) => ({ filename: a.filename, content: a.content, content_type: a.type }))
           : undefined,
@@ -119,6 +120,16 @@ export async function sendVia(env: Env, provider: Provider, m: Outgoing): Promis
   }
 
   throw new SendError("这个域名还没有可用的发件服务，请在「域名」页配置");
+}
+
+// Resend 发出邮件实际使用的 Message-ID（2026-07 起"查询邮件"接口会返回 message_id）
+export async function resendMessageId(env: Env, id: string): Promise<string | null> {
+  const key = await resendKey(env);
+  if (!key) return null;
+  const res = await fetch(`${env.RESEND_API_BASE ?? "https://api.resend.com"}/emails/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${key}` } });
+  if (!res.ok) return null;
+  const mid = ((await res.json().catch(() => ({}))) as { message_id?: string }).message_id;
+  return mid && mid.includes("@") ? (mid.startsWith("<") ? mid : `<${mid}>`) : null;
 }
 
 // ---- Resend 域名接入 ----

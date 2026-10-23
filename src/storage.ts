@@ -38,9 +38,40 @@ export function blobs(env: Env): BlobStore {
   return env.MAIL ? (env.MAIL as unknown as BlobStore) : new LiteStore(env);
 }
 
+export interface PutItem {
+  key: string;
+  value: ArrayBuffer | ArrayBufferView | string;
+  opts?: PutOptions;
+}
+
+// 批量写入，返回写入失败的 key（不抛出，由调用方决定怎么降级）。
+// 免绑卡模式合并成 D1 batch：免费版每次调用最多 50 次 D1 查询，附件多的邮件逐个写会超限
+export async function putMany(env: Env, items: PutItem[]): Promise<string[]> {
+  if (!items.length) return [];
+  const store = blobs(env);
+  if (store instanceof LiteStore) return store.putMany(items);
+  const res = await Promise.allSettled(items.map((i) => store.put(i.key, i.value, i.opts)));
+  return items.filter((_, n) => res[n].status === "rejected").map((i) => i.key);
+}
+
+// 批量读取：免绑卡模式一次查询取回多行（会话详情、导出、回填用）
+export async function getMany(env: Env, keys: string[]): Promise<Map<string, StoredObject>> {
+  const store = blobs(env);
+  if (store instanceof LiteStore) return store.getMany(keys);
+  const out = new Map<string, StoredObject>();
+  await Promise.all(
+    keys.map(async (k) => {
+      const o = await store.get(k).catch(() => null);
+      if (o) out.set(k, o as StoredObject);
+    }),
+  );
+  return out;
+}
+
 // ---------- 免绑卡模式 ----------
 const D1_TEXT_MAX = 1_900_000; // D1 单行上限 2,000,000 字节，留一点余量
 const D1_BINARY_MAX = 512 * 1024; // 二进制转 base64 存 D1 的上限，再大就放 KV（base64 转换耗 CPU）
+const BATCH_BYTES = 4_000_000;
 const schemaReady = new WeakMap<D1Database, Promise<unknown>>();
 
 interface Row {
@@ -80,8 +111,8 @@ class LiteStore implements BlobStore {
     return p;
   }
 
-  async put(key: string, value: ArrayBuffer | ArrayBufferView | string, opts: PutOptions = {}): Promise<void> {
-    await this.ready();
+  // 决定存放位置；大文件先写进 KV，返回要写入 blobs 表的语句
+  private async prepare(key: string, value: ArrayBuffer | ArrayBufferView | string, opts: PutOptions = {}): Promise<{ stmt: D1PreparedStatement; bytes: number }> {
     let loc: Row["loc"] = "d1";
     let enc: Row["enc"] = "utf8";
     let data: string | null;
@@ -107,16 +138,75 @@ class LiteStore implements BlobStore {
       await this.kv.put(key, data!);
       ((loc = "kv"), (enc = null), (data = null));
     }
-    await this.db
+    const stmt = this.db
       .prepare("INSERT OR REPLACE INTO blobs (key, size, type, custom, loc, enc, created_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .bind(key, size, opts.httpMetadata?.contentType ?? null, opts.customMetadata ? JSON.stringify(opts.customMetadata) : null, loc, enc, Date.now(), data)
-      .run();
+      .bind(key, size, opts.httpMetadata?.contentType ?? null, opts.customMetadata ? JSON.stringify(opts.customMetadata) : null, loc, enc, Date.now(), data);
+    return { stmt, bytes: data?.length ?? 0 };
+  }
+
+  async put(key: string, value: ArrayBuffer | ArrayBufferView | string, opts: PutOptions = {}): Promise<void> {
+    await this.ready();
+    await (await this.prepare(key, value, opts)).stmt.run();
+  }
+
+  async putMany(items: PutItem[]): Promise<string[]> {
+    await this.ready();
+    const failed: string[] = [];
+    const groups: { keys: string[]; stmts: D1PreparedStatement[] }[] = [];
+    let cur = { keys: [] as string[], stmts: [] as D1PreparedStatement[], bytes: 0 };
+    for (const it of items) {
+      try {
+        const { stmt, bytes } = await this.prepare(it.key, it.value, it.opts);
+        // 每个 batch 的数据量控制在约 4 MB
+        if (cur.stmts.length && cur.bytes + bytes > BATCH_BYTES) {
+          groups.push(cur);
+          cur = { keys: [], stmts: [], bytes: 0 };
+        }
+        cur.keys.push(it.key);
+        cur.stmts.push(stmt);
+        cur.bytes += bytes;
+      } catch {
+        failed.push(it.key);
+      }
+    }
+    if (cur.stmts.length) groups.push(cur);
+    for (const g of groups) {
+      try {
+        await this.db.batch(g.stmts);
+      } catch {
+        failed.push(...g.keys);
+      }
+    }
+    return failed;
+  }
+
+  async getMany(keys: string[]): Promise<Map<string, StoredObject>> {
+    await this.ready();
+    const out = new Map<string, StoredObject>();
+    for (let i = 0; i < keys.length; i += 90) {
+      const part = keys.slice(i, i + 90);
+      const { results } = await this.db
+        .prepare(`SELECT key, size, type, custom, loc, enc, created_at, data FROM blobs WHERE key IN (${part.map(() => "?").join(",")})`)
+        .bind(...part)
+        .all<Row>();
+      await Promise.all(
+        results.map(async (row) => {
+          const o = await this.fromRow(row);
+          if (o) out.set(row.key, o);
+        }),
+      );
+    }
+    return out;
   }
 
   async get(key: string): Promise<StoredObject | null> {
     await this.ready();
     const row = await this.db.prepare("SELECT key, size, type, custom, loc, enc, created_at, data FROM blobs WHERE key = ?").bind(key).first<Row>();
-    if (!row) return null;
+    return row ? this.fromRow(row) : null;
+  }
+
+  private async fromRow(row: Row): Promise<StoredObject | null> {
+    const key = row.key;
     const info = toInfo(row);
     if (row.loc === "kv") {
       // KV 是最终一致的：刚写入时其他地区可能要几十秒才能读到
@@ -144,9 +234,10 @@ class LiteStore implements BlobStore {
     for (let i = 0; i < list.length; i += 90) {
       const part = list.slice(i, i + 90);
       const marks = part.map(() => "?").join(",");
-      const { results } = await this.db.prepare(`SELECT key FROM blobs WHERE loc = 'kv' AND key IN (${marks})`).bind(...part).all<{ key: string }>();
-      if (results.length && this.kv) await Promise.all(results.map((r) => this.kv!.delete(r.key)));
-      await this.db.prepare(`DELETE FROM blobs WHERE key IN (${marks})`).bind(...part).run();
+      // 一次查询删除并取回存放位置，KV 里的再单独删
+      const { results } = await this.db.prepare(`DELETE FROM blobs WHERE key IN (${marks}) RETURNING key, loc`).bind(...part).all<{ key: string; loc: string }>();
+      const kvKeys = results.filter((r) => r.loc === "kv").map((r) => r.key);
+      if (kvKeys.length && this.kv) await Promise.all(kvKeys.map((k) => this.kv!.delete(k)));
     }
   }
 

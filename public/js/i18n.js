@@ -6,7 +6,8 @@ let EXACT = null;
 let PATTERNS = [];
 const HAS_CJK = /[㐀-鿿]/;
 // 邮件内容、人名、主题等用户数据不翻译
-const SKIP = ".msg-body, .row-subject, .row-snippet, .editor-area, .thread-subject, .ai-body, .msg-snippet, .sugg, .chip-addr, .att-name, .lb-name, .addr-main b, .msg-name, .row-from, .dc-title b, code, kbd, [data-no-i18n]";
+// .u：其他地方出现的用户数据（标签名、模板名、备注、写信窗口里的主题等）
+const SKIP = ".msg-body, .row-subject, .row-snippet, .editor-area, .thread-subject, .ai-body, .msg-snippet, .sugg, .chip-addr, .att-name, .lb-name, .addr-main b, .msg-name, .row-from, .dc-title b, .u, code, kbd, [data-no-i18n]";
 const ATTRS = ["title", "placeholder", "aria-label", "data-placeholder"];
 
 function tr(value) {
@@ -42,7 +43,7 @@ function translateText(node) {
 }
 
 function translateAttrs(el) {
-  if (!el.closest || el.closest("[data-no-i18n]")) return;
+  if (!el.closest || skipped(el)) return;
   for (const a of ATTRS) {
     const v = el.getAttribute?.(a);
     if (!v) continue;

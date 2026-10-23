@@ -1,0 +1,38 @@
+# 自动化测试：类型检查 + 接口测试 + 浏览器测试，标准版（R2）和免绑卡版（D1 + KV）各跑一遍
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # 只在本仓库运行（一键部署会把这个文件复制到你自己的仓库，那里不需要跑测试）
+    if: github.repository == 'cleantempmail/cleantempmail-workspace'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [r2, lite]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Front-end syntax and version
+        run: |
+          for f in public/js/*.js; do node --check "$f"; done
+          node -e "const v=require('./package.json').version; if(!require('fs').readFileSync('src/version.ts','utf8').includes('\"'+v+'\"')){console.error('src/version.ts 和 package.json 的版本号不一致');process.exit(1)}"
+      - name: Install Playwright
+        run: |
+          npm i --no-save playwright@1
+          npx playwright install --with-deps chromium
+      - run: npm test
+        env:
+          STORAGE: ${{ matrix.storage }}
+          CI: "1"

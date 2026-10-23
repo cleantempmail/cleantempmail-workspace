@@ -4,7 +4,7 @@ import { Cf, CfApiError } from "./cf";
 import type { AppEnv, Env, Session } from "./env";
 import { sendVia, type Provider } from "./providers";
 import { FULL, parseScope } from "./scope";
-import { clearFailures, hashPassword, newChallenge, passwordProblem, recordFailure, tooManyAttempts, verifyAssertion, verifyPassword } from "./local-auth";
+import { clearFailures, hashPassword, newChallenge, passwordProblem, takeAttempt, verifyAssertion, verifyPassword, type AttemptResult } from "./local-auth";
 import { decrypt, domainOf, encrypt, getSetting, getSettings, isEmail, now, randomId, setSetting, sha256hex, workerName } from "./util";
 
 const AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
@@ -108,7 +108,7 @@ export async function csrf(c: Context<AppEnv>, next: Next) {
     if (!ok) return c.json({ error: "跨站请求已被拒绝" }, 403);
     // JSON 接口必须声明 application/json（表单和 text/plain 都属于"简单请求"，可被跨站提交）
     const ct = c.req.header("content-type") ?? "";
-    const isUpload = c.req.path === "/api/uploads";
+    const isUpload = c.req.path === "/api/uploads" || c.req.path === "/api/import";
     if (!isUpload && c.req.path.startsWith("/api/") && m !== "DELETE" && !ct.includes("application/json")) {
       return c.json({ error: "请求格式错误" }, 415);
     }
@@ -159,6 +159,16 @@ auth.get("/callback", async (c) => {
 
 // ---------- 不依赖 OAuth 的管理员登录 ----------
 const clientIp = (c: Context<AppEnv>) => c.req.header("cf-connecting-ip") ?? "unknown";
+const limited = (c: Context<AppEnv>, r: AttemptResult) =>
+  c.json(
+    {
+      error:
+        r === "global"
+          ? "最近有大量失败的登录尝试，密码登录暂停 15 分钟。可以用通行密钥登录，或点「忘记密码」用 Cloudflare API 令牌重设"
+          : "尝试次数太多，请 15 分钟后再试",
+    },
+    429,
+  );
 const rpOf = (c: Context<AppEnv>) => {
   const u = new URL(c.req.url);
   return { rpId: u.hostname, origin: u.origin };
@@ -190,15 +200,13 @@ auth.post("/setup", async (c) => {
 
 auth.post("/password", async (c) => {
   const ip = clientIp(c);
-  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const attempt = await takeAttempt(c.env, ip, { global: true });
+  if (attempt !== "ok") return limited(c, attempt);
   const { password } = await c.req.json<{ password?: string }>().catch(() => ({}) as { password?: string });
   const st = await getSettings(c.env, ["owner_user_id", "admin_password", "owner_email"]);
   if (!st.owner_user_id || !st.admin_password) return c.json({ error: "还没有设置管理员密码" }, 400);
-  if (!(await verifyPassword(String(password ?? ""), st.admin_password))) {
-    await recordFailure(c.env, ip);
-    return c.json({ error: "密码不正确" }, 401);
-  }
-  await clearFailures(c.env, ip);
+  if (!(await verifyPassword(String(password ?? ""), st.admin_password))) return c.json({ error: "密码不正确" }, 401);
+  await clearFailures(c.env, ip, { global: true });
   await createSession(c, st.owner_user_id, st.owner_email, null);
   return c.json({ ok: true });
 });
@@ -206,7 +214,8 @@ auth.post("/password", async (c) => {
 // 忘记密码：用同一个 Cloudflare 账户的 API 令牌证明身份后重设
 auth.post("/reset", async (c) => {
   const ip = clientIp(c);
-  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const attempt = await takeAttempt(c.env, ip);
+  if (attempt !== "ok") return limited(c, attempt);
   const body = await c.req.json<{ token?: string; password?: string }>().catch(() => ({}) as { token?: string; password?: string });
   const st = await getSettings(c.env, ["owner_user_id", "owner_email", "account_id"]);
   if (!st.owner_user_id) return c.json({ error: "还没有设置管理员，请先完成首次设置" }, 400);
@@ -214,14 +223,8 @@ auth.post("/reset", async (c) => {
   if (bad) return c.json({ error: bad }, 400);
   const token = String(body.token ?? "").trim();
   const checked = /^[\w.-]{20,}$/.test(token) ? await checkApiToken(c.env, token, true).catch((e: Error) => e) : new Error("API 令牌格式不对，请粘贴完整的令牌");
-  if (checked instanceof Error) {
-    await recordFailure(c.env, ip);
-    return c.json({ error: checked.message }, 400);
-  }
-  if (st.account_id && checked.accountId !== st.account_id) {
-    await recordFailure(c.env, ip);
-    return c.json({ error: "这个令牌属于另一个 Cloudflare 账户" }, 400);
-  }
+  if (checked instanceof Error) return c.json({ error: checked.message }, 400);
+  if (st.account_id && checked.accountId !== st.account_id) return c.json({ error: "这个令牌属于另一个 Cloudflare 账户" }, 400);
   await Promise.all([setSetting(c.env, "admin_password", await hashPassword(body.password!)), setSetting(c.env, "cf_api_token", await encrypt(c.env, token))]);
   // 旧会话全部失效
   await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(st.owner_user_id).run();
@@ -231,6 +234,9 @@ auth.post("/reset", async (c) => {
 });
 
 auth.post("/passkey/begin", async (c) => {
+  // 每次都会写一条 challenge：按 IP 限流，避免被用来刷 D1 写入额度
+  const attempt = await takeAttempt(c.env, clientIp(c), { kind: "challenge" });
+  if (attempt !== "ok") return limited(c, attempt);
   const owner = await getSetting(c.env, "owner_user_id");
   const { results } = owner ? await c.env.DB.prepare("SELECT id FROM passkeys WHERE user_id = ?").bind(owner).all<{ id: string }>() : { results: [] };
   if (!results.length) return c.json({ error: "还没有添加通行密钥" }, 400);
@@ -239,22 +245,19 @@ auth.post("/passkey/begin", async (c) => {
 
 auth.post("/passkey/finish", async (c) => {
   const ip = clientIp(c);
-  if (await tooManyAttempts(c.env, ip)) return c.json({ error: "尝试次数太多，请 15 分钟后再试" }, 429);
+  const attempt = await takeAttempt(c.env, ip);
+  if (attempt !== "ok") return limited(c, attempt);
   const body = await c.req.json<{ id: string; clientDataJSON: string; authenticatorData: string; signature: string }>();
   const st = await getSettings(c.env, ["owner_user_id", "owner_email"]);
   const row = await c.env.DB.prepare("SELECT id, user_id, public_key, alg, sign_count FROM passkeys WHERE id = ?")
     .bind(String(body.id ?? ""))
     .first<{ id: string; user_id: string; public_key: string; alg: number; sign_count: number }>();
-  if (!row || row.user_id !== st.owner_user_id) {
-    await recordFailure(c.env, ip);
-    return c.json({ error: "这个通行密钥不属于管理员" }, 401);
-  }
+  if (!row || row.user_id !== st.owner_user_id) return c.json({ error: "这个通行密钥不属于管理员" }, 401);
   const { rpId, origin } = rpOf(c);
   try {
     const count = await verifyAssertion(c.env, body, { jwk: JSON.parse(row.public_key), alg: row.alg, signCount: row.sign_count }, rpId, origin);
     await c.env.DB.prepare("UPDATE passkeys SET sign_count = ?, last_used_at = ? WHERE id = ?").bind(count, now(), row.id).run();
   } catch (e: any) {
-    await recordFailure(c.env, ip);
     return c.json({ error: e.message }, 401);
   }
   await clearFailures(c.env, ip);
@@ -315,7 +318,26 @@ auth.post("/magic", async (c) => {
   return generic;
 });
 
+// 打开登录链接只显示确认页，点按钮（POST）才真正登录：
+// 邮件里藏的 <img src="/auth/magic/..."> 之类的请求不能悄悄把当前登录的账户换掉
 auth.get("/magic/:token", async (c) => {
+  const en = !/^zh/i.test(c.req.header("accept-language") ?? "");
+  const t = en
+    ? { title: "Sign in to CleanTempMail Workspace", btn: "Sign in", note: "This link can be used once and expires in 15 minutes." }
+    : { title: "登录 CleanTempMail Workspace", btn: "登录", note: "这个链接只能使用一次，15 分钟内有效。" };
+  return c.html(
+    `<!doctype html><html lang="${en ? "en" : "zh-CN"}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${t.title}</title>
+<style>body{font:15px/1.6 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#f3f4f7;color:#1f2329;display:grid;place-items:center;min-height:100vh;margin:0}
+main{background:#fff;border-radius:16px;padding:32px 28px;max-width:360px;width:calc(100% - 32px);box-shadow:0 10px 30px -12px rgba(15,23,42,.18);text-align:center}
+h1{font-size:18px;margin:0 0 18px}button{font:inherit;font-weight:600;color:#fff;background:#2f6bff;border:0;border-radius:10px;padding:11px 0;width:100%;cursor:pointer}
+p{color:#6b7280;font-size:13px;margin:14px 0 0}</style></head>
+<body><main><h1>${t.title}</h1><form method="post"><button type="submit">${t.btn}</button></form><p>${t.note}</p></main></body></html>`,
+    200,
+    { "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" },
+  );
+});
+
+auth.post("/magic/:token", async (c) => {
   const hash = await sha256hex(c.req.param("token"));
   const row = await c.env.DB.prepare(
     "UPDATE login_tokens SET used = 1 WHERE hash = ? AND used = 0 AND expires_at > ? RETURNING member_id",

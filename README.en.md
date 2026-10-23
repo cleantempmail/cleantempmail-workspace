@@ -49,15 +49,7 @@ Everything is created in your own Cloudflare account. Use **one-click deploy** (
 
 To use your own hostname: open the Worker in the dashboard → **Settings → Domains & Routes → Add → Custom domain**.
 
-**Updating**: the copy in your GitHub doesn't pick up new versions automatically. In your repository, run the commands below; after the push, Cloudflare redeploys and migrates the database automatically:
-
-```bash
-git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # once
-git pull upstream main     # no-card version: git pull upstream lite
-git push
-```
-
-If `wrangler.jsonc` conflicts, keep your own `name`, `database_id` and KV `id`.
+**Updating**: no command line needed. Open the repository in your GitHub → **Actions** → **Update from upstream** → **Run workflow**. Cloudflare redeploys and migrates the database automatically. See [Updating](#updating).
 
 ### Option B: command line
 
@@ -153,11 +145,24 @@ Or use the script (needs an API token with OAuth Clients Write): `CLOUDFLARE_API
 
 ### Updating
 
+When a new version is out, **Settings → System status** shows it and admins get a one-time notice when they open the app. Updates migrate the database first, then deploy, so mail keeps flowing.
+
+**One-click deploys** (no command line): open the repository in your GitHub → **Actions** → **Update from upstream** → **Run workflow**. Cloudflare redeploys a few minutes later.
+
+- To update automatically every week: repository **Settings → Secrets and variables → Actions → Variables**, add a variable `AUTO_UPDATE` with the value `true`
+- The update replaces the app files with the latest version and keeps your own Worker name, database / KV IDs and hostname in `wrangler.jsonc`
+- Repositories deployed before October 2026 don't have this workflow yet: in GitHub, create the file `.github/workflows/update.yml`, paste in the contents of [this file](.github/workflows/update.yml) and commit. It then shows up under Actions
+- A one-click repository doesn't share git history with this one, so `git pull upstream main` doesn't work. Use the steps above (or run `node scripts/update-from-upstream.mjs` in your repository and `git push`)
+
+**Command-line deploys** (from `git clone`):
+
 ```bash
 git pull
 npm install
 npm run update    # migrates the database first, then deploys, so mail keeps flowing during the update
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed (in Chinese).
 
 ### No-card mode
 
@@ -173,7 +178,7 @@ Limits to know:
 - **Capacity**: 500 MB of D1 holds tens of thousands of ordinary emails; KV's 1 GB is mostly used by large attachments. Check usage under **Settings → Data**; it turns red when nearly full
 - **KV allows 1,000 writes a day**: only files over 512 KB use it, ordinary mail never does. A day with lots of large attachments may run out
 - **Fresh large attachments**: KV takes a few seconds to tens of seconds to replicate globally, so another region may need a moment before it can open one
-- The storage mode is fixed after the first deploy and won't switch automatically if you enable R2 later (so old mail stays readable). Migrating existing mail to R2 isn't supported yet
+- The storage mode is fixed after the first deploy and won't switch automatically if you enable R2 later (so old mail stays readable). The deploy script refuses to deploy if the configuration asks for a different storage mode than the one your existing mail uses; to switch anyway (for example a fresh deploy where old mail doesn't matter), run `npm run deploy -- --switch-storage`. Migrating existing mail to R2 isn't supported yet
 
 ### Troubleshooting
 
@@ -185,6 +190,10 @@ Limits to know:
 - **Resend says the domain slots are full**: the free plan allows 3 domains. Free one up (see step 7) or upgrade your Resend plan. With many domains, Workers Paid with Cloudflare sending is simpler: 3,000 emails/month included and no limit on the number of domains
 - **No address after deploying**: check the "访问地址" (address) line at the end of the build log. If it's missing, open the Worker in the dashboard → **Settings → Domains & Routes** and enable workers.dev or add a custom domain
 - **AI features unavailable**: summaries, translation and reply drafts use Workers AI, which has a daily free allowance
+- **How do I know if incoming mail had problems**: **Settings → System status** lists recent delivery problems (the original of every failed message is saved and can be downloaded) and today's D1 / Workers usage against the free plan (the token needs "Account Analytics · Read"). Admins get a notice when they open the app if something went wrong or the quota is nearly used up
+- **Large mail on the free plan**: the free plan allows 10 ms of CPU per request, so a message with very large attachments may not finish processing. It still shows up in the inbox with the original saved — download it from the "More" menu
+- **Moving from Gmail or elsewhere**: **Settings → Data → Import mail** accepts mbox (Google Takeout, Thunderbird, Apple Mail) and .eml. The free plan imports roughly 3,000 messages a day; it pauses when the quota runs out, and importing the same file the next day skips what's already there
+- **There's a lite-branch workflow in my repository**: it maintains the no-card branch of this repository and isn't needed in yours — you can delete `.github/workflows/lite-branch.yml` (newer versions only run it here)
 
 ## Plans
 
@@ -206,6 +215,17 @@ npm run dev
 # simulate inbound mail:
 curl -X POST "http://localhost:8787/cdn-cgi/handler/email?from=a@gmail.com&to=hi@example.com" --data-binary @test.eml
 ```
+
+Automated tests (each run starts a fresh local Worker in a temporary directory and uses a mock Resend, so your data is never touched):
+
+```bash
+npm test                 # standard (R2)
+npm run test:lite        # no-card (D1 + KV)
+# browser tests need Playwright (skipped if it isn't installed):
+npm i --no-save playwright && npx playwright install chromium
+```
+
+CI runs the type check and both test suites on every push.
 
 See [README.md](README.md) for the full feature list, security notes and code layout (in Chinese).
 

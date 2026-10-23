@@ -54,6 +54,23 @@ async function boot() {
   startPolling();
   bindShortcuts();
   refreshPush();
+  if (store.me.role === "admin") setTimeout(checkAlerts, 3000);
+}
+
+// 管理员打开应用时提示：收信异常、额度快用完、存储方式不一致、有新版本（每条只提示一次）
+async function checkAlerts() {
+  const { alerts } = await api("/system/alerts").catch(() => ({ alerts: [] }));
+  const seen = prefs.get("alertsSeen", []);
+  const fresh = alerts.filter((a) => !seen.includes(a.key));
+  if (!fresh.length) return;
+  prefs.set("alertsSeen", [...seen, ...fresh.map((a) => a.key)].slice(-40));
+  for (const a of fresh) {
+    toast(a.text, {
+      type: a.level === "error" ? "error" : "info",
+      duration: 10000,
+      action: { label: "查看", onClick: () => (location.hash = "#/settings/system") },
+    });
+  }
 }
 
 // ---------- 外框 ----------
@@ -266,7 +283,7 @@ function renderSidebar() {
             const info = addrInfo.get(b.mailbox);
             return `<a class="nav-item sub ${active("box", b.mailbox) ? "active" : ""} ${info?.blocked ? "blocked" : ""}" href="${hrefFor("box", b.mailbox)}" title="${esc(b.mailbox)}${info?.note ? " · " + esc(info.note) : ""}">
               ${info?.color ? `<span class="addr-dot" style="--lc:${esc(info.color)}"></span>` : ""}
-              <span class="nav-label">${esc(b.mailbox.split("@")[0])}<span class="muted">@</span>${info?.note ? `<span class="nav-note">${esc(info.note)}</span>` : ""}</span>
+              <span class="nav-label">${esc(b.mailbox.split("@")[0])}<span class="muted">@</span>${info?.note ? `<span class="nav-note u">${esc(info.note)}</span>` : ""}</span>
               ${info?.muted ? icon("bellOff", "nav-mini") : ""}${b.unread ? `<span class="nav-count">${b.unread}</span>` : ""}</a>`;
           })
           .join("")}${boxes.length > 6 && shown.length <= 6 ? `<button class="nav-more" data-expand-domain="${esc(d.name)}">还有 ${boxes.length - 6} 个地址…</button>` : ""}
@@ -278,7 +295,7 @@ function renderSidebar() {
   const labels = store.labels
     .map((l) => {
       const c = labelCounts.get(l.id);
-      return `<a class="nav-item ${active("label", l.id) ? "active" : ""}" href="${hrefFor("label", l.id)}"><span class="label-dot" style="--lc:${esc(l.color)}"></span><span class="nav-label">${esc(l.name)}</span>${c?.unread ? `<span class="nav-count">${c.unread}</span>` : ""}</a>`;
+      return `<a class="nav-item ${active("label", l.id) ? "active" : ""}" href="${hrefFor("label", l.id)}"><span class="label-dot" style="--lc:${esc(l.color)}"></span><span class="nav-label u">${esc(l.name)}</span>${c?.unread ? `<span class="nav-count">${c.unread}</span>` : ""}</a>`;
     })
     .join("");
 
@@ -460,14 +477,26 @@ on("addresses:changed", async () => {
   renderSidebar();
 });
 
-// 轻量轮询：可见时 30 秒、后台时 2 分钟；只有计数变化才刷新列表
+// 轻量轮询：只有计数变化才刷新列表。
+// 可见时 30 秒；后台时 5 分钟，开启了推送通知就暂停（有新邮件会收到通知）；出错时逐步拉长间隔
 function startPolling() {
   let last = { unread: store.stats.unread, latestInboxAt: store.stats.latestInboxAt };
   let timer;
+  let lastTick = Date.now();
+  let failures = 0;
+  const pushOn = () => prefs.get("notify", false) && window.Notification?.permission === "granted";
+  const schedule = () => {
+    clearTimeout(timer);
+    if (document.hidden && pushOn()) return;
+    const base = document.hidden ? 300000 : 30000;
+    timer = setTimeout(tick, Math.min(base * 2 ** failures, 600000));
+  };
   const tick = async () => {
     clearTimeout(timer);
+    lastTick = Date.now();
     try {
       const p = await api("/poll");
+      failures = 0;
       if (p.latestInboxAt !== last.latestInboxAt || p.unread !== last.unread) {
         const isNew = last.latestInboxAt && p.latestInboxAt > last.latestInboxAt;
         last = p;
@@ -476,11 +505,18 @@ function startPolling() {
         if (["inbox", "all", "box", "domain", "label"].includes(v) && !store.list.selected.size) loadList({ silent: true });
         if (isNew && !document.hidden) toast("收到新邮件", { action: v !== "inbox" ? { label: "查看", onClick: () => navigate("inbox") } : undefined });
       }
-    } catch {}
-    timer = setTimeout(tick, document.hidden ? 120000 : 30000);
+    } catch {
+      failures = Math.min(failures + 1, 4);
+    }
+    schedule();
   };
-  timer = setTimeout(tick, 30000);
-  document.addEventListener("visibilitychange", () => !document.hidden && tick());
+  schedule();
+  // 切回页面时立即检查一次（距上次至少 10 秒）
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && Date.now() - lastTick > 10000) tick();
+    else schedule();
+  });
+  window.addEventListener("online", () => tick());
 }
 
 // ---------- 快捷键 ----------
@@ -492,6 +528,8 @@ function bindShortcuts() {
     const t = e.target;
     if (t.closest?.("input, textarea, select, [contenteditable=true], .modal-backdrop, .lightbox, .composer")) return;
     if (document.querySelector(".modal-backdrop, .lightbox, .menu")) return;
+    // 焦点在链接、按钮上时，回车和空格交给它们自己（否则会被下面的快捷键吞掉）
+    if ((e.key === "Enter" || e.key === " ") && t.closest?.("a, button, summary, label, [role=button], [role=menuitem], [role=tab], [role=link], [tabindex]:not([tabindex='-1'])")) return;
     const r = store.route;
     const inMail = !PAGES.includes(r.view);
     const k = e.key;

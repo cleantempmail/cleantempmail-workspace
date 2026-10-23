@@ -94,7 +94,7 @@ function messageCard(m, expanded) {
   const bad = m.auth?.dmarc === "fail";
   return `<article class="msg ${expanded ? "expanded" : "collapsed"} ${m.folder === "sent" ? "from-me" : ""} ${m.is_bounce ? "is-bounce" : ""}" data-id="${esc(m.id)}">
     <header class="msg-head">
-      ${avatar(from.name, from.address, "md", { brand: m.folder !== "sent" })}
+      ${avatar(from.name, from.address, "md", { brand: m.folder !== "sent" && m.auth?.dmarc === "pass" })}
       <div class="msg-who">
         <div class="msg-line1">
           <span class="msg-name">${esc(displayName(from.name, from.address))}</span>
@@ -156,6 +156,13 @@ function attachmentsHtml(m, atts) {
         const k = fileKind(a.mimeType, a.filename);
         const url = `/api/messages/${encodeURIComponent(m.id)}/attachments/${a.index}`;
         const isImg = /^image\/(png|jpe?g|gif|webp|bmp|avif)$/i.test(a.mimeType);
+        // 收信时没能保存的附件：只显示名称，提示从原始邮件里取
+        if (a.missing) {
+          return `<div class="att-card missing" data-kind="${k.kind}">
+            <span class="att-preview"><span class="ficon lg f-${k.kind}">${esc(k.label)}</span></span>
+            <div class="att-info"><span class="att-name" title="${esc(a.filename)}">${esc(a.filename)}</span><span class="att-size i18n">没能保存，请下载原始邮件</span></div>
+          </div>`;
+        }
         return `<div class="att-card" data-index="${a.index}" data-kind="${k.kind}">
           <button class="att-preview" data-preview="${a.index}" title="${isImg || k.kind === "pdf" ? "预览" : "下载"}" aria-label="${esc(a.filename)}">
             ${isImg ? `<img src="${url}?inline=1" alt="" loading="lazy" />` : `<span class="ficon lg f-${k.kind}">${esc(k.label)}</span>`}
@@ -165,6 +172,61 @@ function attachmentsHtml(m, atts) {
         </div>`;
       })
       .join("")}</div></div>`;
+}
+
+function threadTagsHtml(t) {
+  const msgs = t.messages;
+  const boxes = [...new Set(msgs.map((m) => m.mailbox))];
+  const labels = (t.labels || []).map((id) => store.labels.find((l) => l.id === id)).filter(Boolean);
+  return `${boxes.map((b) => `<a class="tag tag-in" href="#/box/${encodeURIComponent(b)}">${icon("at")}${esc(b)}</a>`).join("")}
+    ${labels.map((l) => `<span class="tag label-tag" style="--lc:${esc(l.color)}"><span class="label-dot"></span><span class="u">${esc(l.name)}</span><button data-unlabel="${esc(l.id)}" aria-label="移除标签">${icon("x")}</button></span>`).join("")}
+    ${t.snooze_until && t.snooze_until * 1000 > Date.now() ? `<span class="tag snooze-tag">${icon("clock")}${esc(fmtWhen(t.snooze_until))} 提醒<button data-unsnooze aria-label="取消提醒">${icon("x")}</button></span>` : ""}
+    ${msgs.length > 1 ? `<span class="tag">${msgs.length} 封邮件</span>` : ""}`;
+}
+
+// 星标、标签、提醒这类操作只更新会话头部和星标按钮，不重建邮件正文：
+// 避免 iframe 重新加载，滚动位置、手动展开的邮件和"显示图片"的选择都保留
+function patchReader() {
+  const el = pane();
+  const t = store.thread;
+  if (!el || !t?.messages) return;
+  const anyStar = t.messages.some((m) => m.starred);
+  const star = el.querySelector(".reader-toolbar .star-btn");
+  if (star) {
+    star.classList.toggle("on", anyStar);
+    star.dataset.threadAct = anyStar ? "unstar" : "star";
+    star.innerHTML = icon("star", anyStar ? "filled" : "");
+  }
+  el.querySelectorAll(".msg[data-id]").forEach((card) => {
+    const m = t.messages.find((x) => x.id === card.dataset.id);
+    const b = card.querySelector("[data-msg-act]");
+    if (!m || !b) return;
+    b.classList.toggle("on", Boolean(m.starred));
+    b.dataset.msgAct = m.starred ? "unstar" : "star";
+    b.innerHTML = icon("star", m.starred ? "filled" : "");
+  });
+  const tags = el.querySelector(".thread-tags");
+  if (tags) {
+    tags.innerHTML = threadTagsHtml(t);
+    bindTags(el);
+  }
+}
+
+function bindTags(el) {
+  const t = store.thread;
+  el.querySelectorAll("[data-unlabel]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        await threadAction([t.threadId], "unlabel", { labelId: b.dataset.unlabel, silent: true });
+        t.labels = (t.labels || []).filter((x) => x !== b.dataset.unlabel);
+        patchReader();
+      }),
+  );
+  el.querySelector("[data-unsnooze]")?.addEventListener("click", async () => {
+    await threadAction([t.threadId], "unsnooze", { silent: true });
+    t.snooze_until = null;
+    patchReader();
+  });
 }
 
 export function renderReader() {
@@ -187,6 +249,7 @@ export function renderReader() {
   }
   const msgs = t.messages;
   const last = msgs[msgs.length - 1];
+  const target = replyTarget(msgs);
   const subject = (msgs.find((m) => !m.is_bounce && m.subject) ?? last)?.subject || "（无主题）";
   const view = store.route.view;
   const inTrash = view === "trash";
@@ -195,9 +258,7 @@ export function renderReader() {
   const anyInbox = inbox.length > 0;
   const archived = anyInbox && inbox.every((m) => m.archived);
   const spam = inbox.some((m) => m.spam);
-  const boxes = [...new Set(msgs.map((m) => m.mailbox))];
   const expandedIds = new Set([last?.id, ...inbox.filter((m) => !m.is_read).map((m) => m.id)]);
-  const labels = (t.labels || []).map((id) => store.labels.find((l) => l.id === id)).filter(Boolean);
   const unsub = [...inbox].reverse().find((m) => m.list_unsub);
 
   const actions = inTrash
@@ -231,10 +292,7 @@ export function renderReader() {
     <div class="reader-scroll">
       <div class="thread-head">
         <h1 class="thread-subject">${subject === "（无主题）" ? '<span class="i18n">（无主题）</span>' : esc(subject)}</h1>
-        <div class="thread-tags">${boxes.map((b) => `<a class="tag tag-in" href="#/box/${encodeURIComponent(b)}">${icon("at")}${esc(b)}</a>`).join("")}
-          ${labels.map((l) => `<span class="tag label-tag" style="--lc:${esc(l.color)}"><span class="label-dot"></span>${esc(l.name)}<button data-unlabel="${esc(l.id)}" aria-label="移除标签">${icon("x")}</button></span>`).join("")}
-          ${t.snooze_until && t.snooze_until * 1000 > Date.now() ? `<span class="tag snooze-tag">${icon("clock")}${esc(fmtWhen(t.snooze_until))} 提醒<button data-unsnooze aria-label="取消提醒">${icon("x")}</button></span>` : ""}
-          ${msgs.length > 1 ? `<span class="tag">${msgs.length} 封邮件</span>` : ""}</div>
+        <div class="thread-tags">${threadTagsHtml(t)}</div>
       </div>
       ${spam ? `<div class="thread-banner spam">${icon("shieldAlert")}<div><b>这封邮件在垃圾邮件中</b><span>${spamReason(inbox.find((m) => m.spam))}</span></div><button class="btn sm" data-thread-act="notspam">不是垃圾邮件</button></div>` : ""}
       ${unsub && !spam ? `<div class="thread-banner info">${icon("bellOff")}<div><b>这是订阅邮件</b><span>来自 ${esc(unsub.from_name || unsub.from_addr)}，不想再收到可以一键退订。</span></div><button class="btn sm" data-unsub="${esc(unsub.id)}">退订</button></div>` : ""}
@@ -244,14 +302,14 @@ export function renderReader() {
         !inTrash && last
           ? `<div class="reply-zone">
               <div class="reply-box">
-                <button class="reply-prompt" data-reply-last="reply">${icon("reply")}<span>回复 ${esc(displayName(senderOf(last).name, senderOf(last).address))}…</span></button>
+                <button class="reply-prompt" data-reply-last="reply">${icon("reply")}<span>回复 ${esc(displayName(senderOf(target).name, senderOf(target).address))}…</span></button>
                 <div class="reply-alt">
-                  ${parseList(last.to_addrs).length + parseList(last.cc_addrs).length > 1 ? `<button class="btn ghost sm" data-reply-last="replyAll">${icon("replyAll")}全部回复</button>` : ""}
+                  ${parseList(target.to_addrs).length + parseList(target.cc_addrs).length > 1 ? `<button class="btn ghost sm" data-reply-last="replyAll">${icon("replyAll")}全部回复</button>` : ""}
                   <button class="btn ghost sm" data-reply-last="forward">${icon("forward")}转发</button>
                 </div>
               </div>
               <div class="reply-slot"></div>
-              <p class="reply-hint">回复时自动使用 <b>${esc(last.mailbox)}</b> 发出</p>
+              <p class="reply-hint">回复时自动使用 <b>${esc(target.mailbox)}</b> 发出</p>
             </div>`
           : ""
       }
@@ -281,20 +339,8 @@ function bindReader(el, moreActs = []) {
   el.querySelector("[data-back]").onclick = () => navigate(r.view, r.arg, null);
   el.querySelectorAll("[data-thread-act]").forEach((b) => (b.onclick = () => threadActionFromReader(b.dataset.threadAct)));
   el.querySelector("[data-snooze]")?.addEventListener("click", (e) => snoozeMenu(e.currentTarget, [t.threadId]));
-  el.querySelector("[data-labels]")?.addEventListener("click", (e) => labelEditor(e.currentTarget, [t.threadId], t.labels || [], (labels) => ((t.labels = labels), renderReader())));
-  el.querySelectorAll("[data-unlabel]").forEach(
-    (b) =>
-      (b.onclick = async () => {
-        await threadAction([t.threadId], "unlabel", { labelId: b.dataset.unlabel, silent: true });
-        t.labels = (t.labels || []).filter((x) => x !== b.dataset.unlabel);
-        renderReader();
-      }),
-  );
-  el.querySelector("[data-unsnooze]")?.addEventListener("click", async () => {
-    await threadAction([t.threadId], "unsnooze", { silent: true });
-    t.snooze_until = null;
-    renderReader();
-  });
+  el.querySelector("[data-labels]")?.addEventListener("click", (e) => labelEditor(e.currentTarget, [t.threadId], t.labels || [], (labels) => ((t.labels = labels), patchReader())));
+  bindTags(el);
   el.querySelector("[data-unsub]")?.addEventListener("click", (e) => unsubscribe(find(e.currentTarget.dataset.unsub)));
   el.querySelector("[data-ai-summary]")?.addEventListener("click", (e) => aiSummary(el, e.currentTarget));
   el.querySelector("[data-thread-more]").onclick = (e) => {
@@ -310,7 +356,7 @@ function bindReader(el, moreActs = []) {
       lastIn && isAdmin() ? { label: `停用地址 ${lastIn.mailbox}`, icon: "bellOff", onClick: () => disableAddress(lastIn.mailbox) } : null,
     ].filter(Boolean));
   };
-  el.querySelectorAll("[data-reply-last]").forEach((b) => (b.onclick = () => openComposer(replyPrefill(msgs[msgs.length - 1], b.dataset.replyLast), { mount: replySlot() })));
+  el.querySelectorAll("[data-reply-last]").forEach((b) => (b.onclick = () => openComposer(replyPrefill(replyTarget(msgs), b.dataset.replyLast), { mount: replySlot() })));
 
   el.querySelectorAll(".msg").forEach((card) => {
     const m = find(card.dataset.id);
@@ -492,14 +538,25 @@ async function disableAddress(addr) {
 
 async function unsubscribe(m) {
   if (!m) return;
-  const ok = await confirmDialog({ title: "退订这个订阅？", message: `将通知 ${esc(m.from_name || m.from_addr)} 不再发送邮件。`, confirmLabel: "退订" });
+  // 退订方式由发件人决定：确认框里写清楚会发生什么（特别是会以你的地址给谁发邮件）
+  const u = m.list_unsub || {};
+  let to = "";
+  try {
+    to = u.mailto ? decodeURIComponent(u.mailto.split("?")[0]).trim() : "";
+  } catch {}
+  const parts = [];
+  if (u.oneClick && u.url) parts.push(`将通过发件方提供的一键退订链接，通知 ${esc(m.from_name || m.from_addr)} 不再发送邮件。`);
+  if (to) parts.push(`${parts.length ? "如果一键退订失败，" : ""}将以 ${esc(m.mailbox)} 的名义发送一封退订邮件到 ${esc(to)}。`);
+  if (!parts.length) parts.push("将打开发件方的退订页面。");
+  const ok = await confirmDialog({ title: "退订这个订阅？", message: parts.join("<br>"), confirmLabel: "退订" });
   if (!ok) return;
   try {
     const r = await api(`/messages/${m.id}/unsubscribe`, { body: {} });
     if (r.method === "open") {
       window.open(r.url, "_blank", "noopener,noreferrer");
       toast("已打开退订页面，请在新页面中完成退订");
-    } else toast("已退订", { type: "success" });
+    } else if (r.method === "mailto") toast(`已发送退订邮件到 ${r.to}`, { type: "success" });
+    else toast("已退订", { type: "success" });
   } catch (e) {
     toastError(e);
   }
@@ -548,7 +605,7 @@ async function threadActionFromReader(action) {
   const tid = store.thread.threadId;
   if (["star", "unstar"].includes(action)) {
     store.thread.messages.forEach((m, i, arr) => (m.starred = action === "star" ? (i === arr.length - 1 ? 1 : m.starred) : 0));
-    renderReader();
+    patchReader();
   }
   await threadAction([tid], action);
   if (["unread", "spam", "notspam"].includes(action)) navigate(store.route.view, store.route.arg, null);
@@ -561,16 +618,19 @@ async function messageAction(m, action) {
     await api(`/messages/${m.id}/action`, { body: { action } });
     if (["trash", "delete", "restore"].includes(action)) {
       const rest = store.thread.messages.filter((x) => x.id !== m.id);
-      if (!rest.length) navigate(store.route.view, store.route.arg, null);
-      else store.thread.messages = rest;
       toast(action === "trash" ? "已移到废纸篓" : action === "restore" ? "已恢复" : "已永久删除");
       emit("mail:changed", { keepThread: true });
+      if (!rest.length) return navigate(store.route.view, store.route.arg, null);
+      store.thread.messages = rest;
+      // 只移除这一封的卡片，其他邮件保持原样
+      pane()?.querySelector(`.msg[data-id="${CSS.escape(m.id)}"]`)?.remove();
+      patchReader();
     } else {
       if (action === "star" || action === "unstar") m.starred = action === "star" ? 1 : 0;
       if (action === "read" || action === "unread") m.is_read = action === "read" ? 1 : 0;
       emit("mail:changed", { keepThread: true });
+      patchReader();
     }
-    renderReader();
   } catch (e) {
     toastError(e);
   }
@@ -615,9 +675,12 @@ function lightbox(m, startIndex) {
   show();
 }
 
+// 回复对象：最后一封不是退信通知的邮件（否则会回复给 mailer-daemon）
+const replyTarget = (msgs) => [...msgs].reverse().find((m) => !m.is_bounce) ?? msgs[msgs.length - 1];
+
 export function replyToCurrent(mode) {
   const msgs = store.thread?.messages;
-  if (msgs?.length) openComposer(replyPrefill(msgs[msgs.length - 1], mode), { mount: replySlot() });
+  if (msgs?.length) openComposer(replyPrefill(replyTarget(msgs), mode), { mount: replySlot() });
 }
 
 export function threadShortcut(action) {
