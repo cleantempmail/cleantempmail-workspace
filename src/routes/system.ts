@@ -188,6 +188,9 @@ system.get("/system/alerts", async (c) => {
   const inbound = counts.results.filter((r) => r.kind === "inbound_error" || r.kind === "inbound_timeout");
   const nIn = inbound.reduce((a, b) => a + b.n, 0);
   if (nIn) alerts.push({ key: `inbound:${Math.max(...inbound.map((r) => r.last))}`, level: "error", text: `最近 24 小时有 ${nIn} 封邮件收信异常` });
+  const errs = counts.results.filter((r) => r.kind === "cron_error" || r.kind === "api_error");
+  const nErr = errs.reduce((a, b) => a + b.n, 0);
+  if (nErr) alerts.push({ key: `errors:${Math.max(...errs.map((r) => r.last))}`, level: "warn", text: `最近 24 小时程序出错 ${nErr} 次` });
   const sched = counts.results.find((r) => r.kind === "scheduled_failed");
   if (sched) alerts.push({ key: `scheduled:${sched.last}`, level: "warn", text: `最近 24 小时有 ${sched.n} 封定时邮件发送失败` });
   if (storage.mismatch) alerts.push({ key: "storage", level: "error", text: "存储方式和之前不一致，已有邮件的正文可能无法读取" });

@@ -300,6 +300,17 @@ describe("系统状态", () => {
     assert.ok(a.alerts.some((x) => x.key.startsWith("inbound:")), "收信异常会提醒");
   });
 
+  test("每天的任务：校准被改乱的计数", async () => {
+    sql("UPDATE mailbox_stats SET unread = unread + 7, total = total + 3");
+    sql("UPDATE stats_total SET unread = unread + 7");
+    assert.notDeepEqual(recount(), []);
+    await cron("17 3 * * *");
+    await sleep(1500);
+    assert.deepEqual(recount(), [], "计数恢复正确");
+    const total = sql("SELECT unread FROM stats_total")[0].unread;
+    assert.equal(total, sql("SELECT COALESCE(SUM(unread), 0) AS n FROM mailbox_stats")[0].n);
+  });
+
   test("最后：所有地址的计数和实际一致", async () => {
     await sleep(200);
     assert.deepEqual(recount(), []);
