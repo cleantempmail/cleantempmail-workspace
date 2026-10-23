@@ -7,18 +7,25 @@ import { runScheduled } from "./routes/compose";
 import { refreshPendingSending } from "./provision";
 import { refreshDelivery } from "./routes/org";
 import { backfillPending, backfillStep, reconcileStats, touch } from "./threads";
-import { getSetting, now, placeholders, setSetting } from "./util";
+import { getSetting, logEventOnce, now, placeholders, setSetting } from "./util";
 import { blobs } from "./storage";
 
+// 单个任务出错不影响其他任务；错误记进系统事件（设置 → 系统状态里能看到原因）
+const guard = <T>(env: Env, task: string, fallback: T) => async (e: any): Promise<T> => {
+  console.error(task, e);
+  await logEventOnce(env, "cron_error", { task, error: String(e?.message ?? e).slice(0, 500) });
+  return fallback;
+};
+
 export async function everyMinute(env: Env): Promise<void> {
-  const sent = await runScheduled(env).catch((e) => (console.error("scheduled send", e), 0));
-  await wakeSnoozed(env).catch((e) => console.error("snooze", e));
-  await finalizeStale(env).catch((e) => console.error("finalize", e));
+  const sent = await runScheduled(env).catch(guard(env, "scheduled-send", 0));
+  await wakeSnoozed(env).catch(guard(env, "snooze", undefined));
+  await finalizeStale(env).catch(guard(env, "finalize", 0));
   if (sent) return;
 
-  await purgeExpired(env).catch((e) => console.error("purge", e));
-  await retryBlobTrash(env).catch((e) => console.error("blob trash", e));
-  if (await backfillPending(env)) await backfillStep(env, 40).catch((e) => console.error("backfill", e));
+  await purgeExpired(env).catch(guard(env, "purge", undefined));
+  await retryBlobTrash(env).catch(guard(env, "blob-trash", undefined));
+  if (await backfillPending(env)) await backfillStep(env, 40).catch(guard(env, "backfill", undefined));
 
   // 每 15 分钟查一次投递状态（需要管理员登录过且 OAuth 勾选了 analytics.read）
   const last = Number((await getSetting(env, "delivery_checked_at")) ?? 0);
@@ -61,6 +68,15 @@ async function purgeExpired(env: Env): Promise<void> {
 }
 
 export async function daily(env: Env): Promise<void> {
+  try {
+    await dailyTasks(env);
+  } catch (e: any) {
+    await guard(env, "daily", undefined)(e);
+    throw e;
+  }
+}
+
+async function dailyTasks(env: Env): Promise<void> {
   // 超过 7 天、且没有被草稿或定时发送引用的临时附件
   const [drafts, scheduled] = await Promise.all([
     env.DB.prepare("SELECT data FROM drafts").all<{ data: string }>(),

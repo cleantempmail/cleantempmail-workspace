@@ -186,6 +186,17 @@ export function noteStorageMode(env: Env): Promise<unknown> | null {
     .catch(() => {});
 }
 
+// 同样的错误一小时内只记一次（定时任务每分钟运行，持续出错时不刷屏）
+export async function logEventOnce(env: Env, kind: string, detail: Record<string, unknown>): Promise<void> {
+  try {
+    const seen = await env.DB.prepare("SELECT 1 FROM events WHERE kind = ? AND detail = ? AND created_at > ? LIMIT 1")
+      .bind(kind, JSON.stringify(detail).slice(0, 2000), now() - 3600)
+      .first();
+    if (seen) return;
+  } catch {}
+  await logEvent(env, kind, detail);
+}
+
 // 系统事件（收信失败、额度用完等），设置 → 系统状态里显示。D1 本身出错时写不进去，所以只能尽力而为
 export async function logEvent(env: Env, kind: string, detail: Record<string, unknown>): Promise<void> {
   try {

@@ -10,7 +10,7 @@ import { messages } from "./routes/messages";
 import { org } from "./routes/org";
 import { system } from "./routes/system";
 import { canUseDomain } from "./scope";
-import { encrypt, getSetting, getSettings, isEmail, setSetting } from "./util";
+import { encrypt, getSetting, getSettings, isEmail, logEventOnce, setSetting } from "./util";
 
 export const api = new Hono<AppEnv>();
 
@@ -19,6 +19,8 @@ api.onError((err, c) => {
   if (err instanceof SendError) return c.json({ error: err.message, code: err.code }, 400);
   if (err instanceof HttpError) return c.json({ error: err.message }, err.status as 400);
   console.error(err);
+  // 意外错误记进系统事件，设置 → 系统状态里能看到
+  c.executionCtx.waitUntil(logEventOnce(c.env, "api_error", { path: `${c.req.method} ${c.req.routePath || c.req.path}`, error: String(err.message || err).slice(0, 500) }));
   return c.json({ error: err.message || "服务器错误" }, 500);
 });
 

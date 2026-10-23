@@ -135,7 +135,8 @@ export async function reconcileStats(env: Env): Promise<void> {
        FROM messages WHERE deleted_at IS NULL GROUP BY mailbox`,
     ),
     env.DB.prepare(
-      `INSERT INTO stats_total (id, unread, last_at) SELECT 1, COALESCE(SUM(unread), 0), COALESCE(MAX(last_at), 0) FROM mailbox_stats
+      // INSERT … SELECT 后面接 ON CONFLICT 时，SELECT 必须带 WHERE，否则 SQLite 会把 ON 当成 JOIN 条件而报语法错误
+      `INSERT INTO stats_total (id, unread, last_at) SELECT 1, COALESCE(SUM(unread), 0), COALESCE(MAX(last_at), 0) FROM mailbox_stats WHERE 1
        ON CONFLICT (id) DO UPDATE SET unread = excluded.unread, last_at = MAX(stats_total.last_at, excluded.last_at)`,
     ),
   ]);

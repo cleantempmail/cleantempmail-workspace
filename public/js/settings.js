@@ -951,6 +951,17 @@ const EVENT_TEXT = {
   inbound_error: "收信出错",
   inbound_timeout: "邮件过大，没能解析完成",
   scheduled_failed: "定时邮件发送失败",
+  cron_error: "定时任务出错",
+  api_error: "程序出错",
+};
+const TASK_TEXT = {
+  daily: "每日清理",
+  "scheduled-send": "定时发送",
+  snooze: "稍后提醒",
+  finalize: "收尾中断的收信",
+  purge: "清理过期邮件",
+  "blob-trash": "清理文件",
+  backfill: "数据回填",
 };
 
 async function system(body) {
@@ -966,6 +977,7 @@ async function system(body) {
   const over = u && !u.error && (u.d1RowsRead > st.limits.d1RowsRead || u.d1RowsWritten > st.limits.d1RowsWritten || u.workersRequests > st.limits.workersRequests);
   const errs = u && !u.error ? Object.entries(u.scriptErrors) : [];
   const ERR_NAME = { exceededResources: "超出 CPU / 内存限制", scriptThrewException: "程序出错", internalError: "Cloudflare 内部错误" };
+  // 出错的详细原因在下面的「异常记录」里（新版本起会记录）
   body.innerHTML = `
     <section class="set-card">
       <div class="set-row"><div><b>版本</b><span>当前 ${esc(st.version.version)}${st.version.latest ? ` · 最新 ${esc(st.version.latest)}` : ""}。<a href="${esc(st.version.changelog)}" target="_blank" rel="noopener">更新说明</a></span></div>
@@ -997,7 +1009,7 @@ async function system(body) {
         : ""
     }
     <section class="set-card">
-      <div class="set-row"><div><b>收信与发送异常</b><span>邮件不会因此丢失：收信出错的邮件原文已经保存，可以在邮件的「更多」菜单里下载。最近 30 天的记录。</span></div>
+      <div class="set-row"><div><b>异常记录</b><span>收信、发送和程序出错的记录（最近 30 天）。邮件不会因此丢失：收信出错的邮件原文已经保存，可以在邮件的「更多」菜单里下载。</span></div>
         ${st.events.length ? `<button class="btn ghost sm" data-clear-events>清空记录</button>` : ""}</div>
       ${st.pending ? `<div class="set-sub muted small">${st.pending} 封邮件正在处理中。</div>` : ""}
       ${
@@ -1005,7 +1017,7 @@ async function system(body) {
           ? `<div class="id-list">${st.events
               .map((e) => {
                 const d = e.detail || {};
-                const who = [d.from, d.to].filter(Boolean).join(" → ");
+                const who = [d.from, d.to].filter(Boolean).join(" → ") || (d.task ? TASK_TEXT[d.task] ?? d.task : "") || d.path || "";
                 return `<div class="id-row"><span class="id-ic">${icon(e.kind === "scheduled_failed" ? "send" : "alert")}</span>
                   <div class="id-main"><b>${esc(EVENT_TEXT[e.kind] ?? e.kind)}${d.subject ? ` · <span class="u">${esc(d.subject)}</span>` : ""}</b>
                   <span class="muted small">${fmtRelative(e.created_at)}${who ? ` · ${esc(who)}` : ""}${d.error ? ` · ${esc(d.error)}` : ""}</span></div></div>`;
