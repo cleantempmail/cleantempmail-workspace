@@ -261,6 +261,35 @@ describe("导入", () => {
   });
 });
 
+describe("添加域名", () => {
+  const cfState = () => fetch(`${MOCK}/cf/__state`).then((r) => r.json());
+
+  test("有第三方 MX 时先征得同意；同意后删掉旧 MX 再开启 Email Routing", async () => {
+    sql("INSERT OR REPLACE INTO settings (key, value) VALUES ('account_id', 'a1')");
+    const first = await c.api("/domains", { body: { zoneId: "z-mx" } });
+    assert.equal(first.ok, false);
+    assert.equal(first.conflict.mx[0].content, "aspmx.l.google.com");
+    const r = await c.api("/domains", { body: { zoneId: "z-mx", replaceMx: true } });
+    assert.equal(r.ok, true, JSON.stringify(r.steps));
+    const z = (await cfState())["z-mx"];
+    assert.equal(z.routing, true);
+    assert.ok(!z.dns.some((x) => x.content === "aspmx.l.google.com"), "旧 MX 已删除");
+    assert.ok(z.dns.some((x) => /mx\.cloudflare\.net$/.test(x.content)), "Cloudflare 的 MX 已添加");
+    assert.equal(z.catchAll.actions[0].type, "worker");
+    assert.ok(sql("SELECT value FROM settings WHERE key = 'mx_backup:z-mx'")[0].value.includes("aspmx.l.google.com"), "旧 MX 已备份");
+    assert.equal(sql("SELECT receive_status FROM domains WHERE name = 'mx.test'")[0].receive_status, "active");
+  });
+
+  test("删掉旧 MX 后仍然开启失败：把旧 MX 恢复回去", async () => {
+    const r = await c.api("/domains", { body: { zoneId: "z-fail", replaceMx: true } });
+    assert.equal(r.ok, false);
+    assert.match(r.steps.at(-1).detail, /已把删除的 MX 记录恢复回去/);
+    const z = (await cfState())["z-fail"];
+    assert.ok(z.dns.some((x) => x.content === "aspmx.l.google.com"), "旧 MX 还在");
+    assert.equal(sql("SELECT COUNT(*) AS n FROM domains WHERE name = 'fail.test'")[0].n, 0);
+  });
+});
+
 describe("系统状态", () => {
   test("状态和提醒接口可用", async () => {
     const st = await c.api("/system/status");
