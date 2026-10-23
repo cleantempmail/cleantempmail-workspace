@@ -1,5 +1,9 @@
 // 极简 Cloudflare API 客户端，用登录用户的 OAuth access token 调用
-const API = "https://api.cloudflare.com/client/v4";
+let API = "https://api.cloudflare.com/client/v4";
+// 测试用：指向模拟的 Cloudflare API（环境变量 CF_API_BASE，线上不设置）
+export function setCfApiBase(url: string | undefined): void {
+  if (url) API = url;
+}
 
 export class CfApiError extends Error {
   constructor(

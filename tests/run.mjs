@@ -23,7 +23,7 @@ void ai, routes, route;
 writeFileSync(CONFIG, JSON.stringify({ ...rest, workers_dev: true }, null, 2));
 
 const mock = await startMockResend();
-const vars = { DEV_LOGIN: "1", APP_SECRET: "test-secret-0123456789abcdef", RESEND_API_BASE: mock.url };
+const vars = { DEV_LOGIN: "1", APP_SECRET: "test-secret-0123456789abcdef", RESEND_API_BASE: mock.url, CF_API_BASE: `${mock.url}/cf`, DEV_CF_API_TOKEN: "test-token" };
 const wr = (args, opts = {}) => spawnSync(npx, ["wrangler", ...args, "-c", CONFIG, "--persist-to", persist], { encoding: "utf8", ...opts });
 
 let dev;

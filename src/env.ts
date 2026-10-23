@@ -17,6 +17,7 @@ export interface Env {
   // 仅本地开发：在 localhost 上跳过 OAuth，可选配一个 API token 用于调用 Cloudflare API
   DEV_LOGIN?: string;
   DEV_CF_API_TOKEN?: string;
+  CF_API_BASE?: string; // 仅测试：模拟的 Cloudflare API 地址
 }
 
 export interface Scope {

@@ -49,22 +49,42 @@ export async function provisionDomain(
     };
   }
 
-  // 2. 先开启 Email Routing，成功后再删旧 MX：避免中途失败导致域名完全收不到信
+  // 2. 开启 Email Routing。
+  // Cloudflare 不允许在还有第三方 MX 记录时开启（错误 2008），所以用户同意替换后：备份旧 MX → 删除 → 开启；
+  // 开启仍然失败就把旧 MX 恢复回去，域名不会因为中途失败而完全收不到信
   const routingOk = async () => (await cf.get<{ enabled: boolean }>(`/zones/${zoneId}/email/routing`).catch(() => null))?.enabled === true;
-  try {
-    await cf.post(`/zones/${zoneId}/email/routing/dns`, {});
-  } catch (e: any) {
-    if (!(await routingOk())) {
-      steps.push({ step: "开启 Email Routing", ok: false, detail: `${e.message}（未改动任何 DNS 记录）` });
-      return { ok: false, domain, steps };
-    }
-  }
+  const enable = () => cf.post(`/zones/${zoneId}/email/routing/dns`, {}).then(() => null, (e: Error) => e);
+  let err = await enable();
+  if (err && (await routingOk())) err = null;
   if (foreign.length) {
     // 备份旧 MX，移除域名时可以恢复
     await setSetting(env, `mx_backup:${zoneId}`, JSON.stringify(foreign.map((r) => ({ name: r.name, content: r.content, priority: r.priority }))));
-    for (const r of foreign) await cf.del(`/zones/${zoneId}/dns_records/${r.id}`);
-    // 删掉冲突记录后，让 Cloudflare 补齐被冲突挡住的 MX
-    await cf.post(`/zones/${zoneId}/email/routing/dns`, {}).catch(() => {});
+    const deleted: typeof foreign = [];
+    try {
+      for (const r of foreign) {
+        await cf.del(`/zones/${zoneId}/dns_records/${r.id}`);
+        deleted.push(r);
+      }
+    } catch (e: any) {
+      err = e;
+    }
+    // 删掉冲突记录后再开启一次（之前已经开启的，这一步会补齐被冲突挡住的 MX）
+    if (deleted.length === foreign.length) {
+      const again = await enable();
+      err = again && !(await routingOk()) ? again : null;
+    }
+    if (err) {
+      const restored = await restoreMx(cf, zoneId, deleted);
+      steps.push({
+        step: "开启 Email Routing",
+        ok: false,
+        detail: `${err.message}（${deleted.length ? (restored ? "已把删除的 MX 记录恢复回去" : "删除的 MX 记录没能全部恢复，请在 Cloudflare 控制台检查") : "未改动任何 DNS 记录"}）`,
+      });
+      return { ok: false, domain, steps };
+    }
+  } else if (err) {
+    steps.push({ step: "开启 Email Routing", ok: false, detail: `${err.message}（未改动任何 DNS 记录）` });
+    return { ok: false, domain, steps };
   }
   steps.push({ step: "检查 MX 记录", ok: true, detail: foreign.length ? `已删除 ${foreign.length} 条旧 MX 记录（已备份）` : "无冲突" });
   steps.push({ step: "开启 Email Routing", ok: true });
@@ -101,6 +121,14 @@ export async function provisionDomain(
   const sendSteps = await setupSending(env, cf, domain, zoneId, opts.preferProvider);
   steps.push(...sendSteps);
   return { ok: true, domain, steps };
+}
+
+async function restoreMx(cf: Cf, zoneId: string, records: { name: string; content: string; priority?: number }[]): Promise<boolean> {
+  let ok = true;
+  for (const r of records) {
+    await cf.post(`/zones/${zoneId}/dns_records`, { type: "MX", name: r.name, content: r.content, priority: r.priority ?? 10, ttl: 1 }).catch(() => (ok = false));
+  }
+  return ok;
 }
 
 export async function setupSending(

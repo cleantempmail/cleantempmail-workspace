@@ -1,8 +1,62 @@
-// 模拟 Resend 接口：记录发出的邮件，返回 id 和 message_id
+// 模拟外部接口：
+//   /…        Resend：记录发出的邮件，返回 id 和 message_id
+//   /cf/…     Cloudflare：域名、MX 记录、Email Routing、Catch-all（只实现添加域名用到的部分）
 import { createServer } from "node:http";
+
+// Cloudflare 的状态：mx.test 和 fail.test 都有第三方 MX；fail.test 无论如何都开启不了 Email Routing
+function cloudflare() {
+  let seq = 0;
+  const zones = {
+    "z-mx": { id: "z-mx", name: "mx.test", account: { id: "a1" }, routing: false, dns: [], catchAll: null },
+    "z-fail": { id: "z-fail", name: "fail.test", account: { id: "a1" }, routing: false, dns: [], catchAll: null },
+  };
+  for (const z of Object.values(zones)) z.dns.push({ id: `r${++seq}`, type: "MX", name: z.name, content: "aspmx.l.google.com", priority: 1 });
+  const cfMx = (c) => /mx\.cloudflare\.net$/.test(c);
+  const ok = (result) => [200, { success: true, errors: [], result }];
+  const fail = (status, code, message) => [status, { success: false, errors: [{ code, message }] }];
+  return {
+    zones,
+    handle(method, path, url, body) {
+      const m = path.match(/^\/zones\/([^/]+)(\/.*)?$/);
+      const z = m && zones[m[1]];
+      if (!z) return fail(404, 1001, "zone not found");
+      const rest = m[2] ?? "";
+      if (method === "GET" && rest === "") return ok({ id: z.id, name: z.name, account: z.account });
+      if (rest === "/dns_records" && method === "GET") {
+        const type = url.searchParams.get("type");
+        const name = url.searchParams.get("name");
+        return ok(z.dns.filter((r) => (!type || r.type === type) && (!name || r.name === name)));
+      }
+      if (rest === "/dns_records" && method === "POST") {
+        const rec = { id: `r${++seq}`, ...body };
+        z.dns.push(rec);
+        return ok(rec);
+      }
+      const del = rest.match(/^\/dns_records\/(.+)$/);
+      if (del && method === "DELETE") {
+        z.dns = z.dns.filter((r) => r.id !== del[1]);
+        return ok({ id: del[1] });
+      }
+      if (rest === "/email/routing" && method === "GET") return ok({ enabled: z.routing });
+      if (rest === "/email/routing/dns" && method === "POST") {
+        if (z.name === "fail.test") return fail(400, 1000, "Simulated failure");
+        if (z.dns.some((r) => r.type === "MX" && !cfMx(r.content))) return fail(400, 2008, "Non-Cloudflare MX records exist");
+        z.routing = true;
+        for (const n of [1, 2, 3]) if (!z.dns.some((r) => r.content === `route${n}.mx.cloudflare.net`)) z.dns.push({ id: `r${++seq}`, type: "MX", name: z.name, content: `route${n}.mx.cloudflare.net`, priority: n });
+        return ok({ enabled: true });
+      }
+      if (rest === "/email/routing/rules/catch_all") {
+        if (method === "PUT") z.catchAll = body;
+        return ok(z.catchAll ?? { actions: [{ type: "drop" }], matchers: [{ type: "all" }], enabled: false });
+      }
+      return fail(404, 7003, "not implemented in mock");
+    },
+  };
+}
 
 export async function startMockResend() {
   const sent = [];
+  const cf = cloudflare();
   const server = createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
@@ -11,6 +65,11 @@ export async function startMockResend() {
       res.end(JSON.stringify(data));
     };
     const url = new URL(req.url, "http://x");
+    if (url.pathname === "/cf/__state") return json(200, cf.zones);
+    if (url.pathname.startsWith("/cf/")) {
+      const [status, data] = cf.handle(req.method, url.pathname.slice(3), url, body ? JSON.parse(body) : undefined);
+      return json(status, data);
+    }
     if (req.method === "POST" && url.pathname === "/emails") {
       const data = JSON.parse(body || "{}");
       const id = `re_${sent.length + 1}`;
