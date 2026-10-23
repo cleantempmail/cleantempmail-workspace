@@ -5,6 +5,7 @@ import { icon } from "./icons.js";
 import { emit, navigate, store } from "./store.js";
 import { confirmDialog, menu, pickDateTime, promptDialog, toast, toastError } from "./ui.js";
 import { debounce, esc, fileKind, fmtSize, fmtWhen, isEmail, parseList, prefs, timePresets } from "./util.js";
+import { t as tr } from "./i18n.js";
 
 // ---------- 收件人输入框（地址胶囊 + 自动补全） ----------
 function parseAddress(raw) {
@@ -57,7 +58,7 @@ class RecipientField {
         this.closeSugg();
       }
     });
-    inp.addEventListener("input", debounce(() => this.suggest(), 120));
+    inp.addEventListener("input", debounce(() => this.suggest(), 200));
     inp.addEventListener("paste", (e) => {
       const text = e.clipboardData?.getData("text/plain") ?? "";
       if (/[,;，；\n]/.test(text) || (text.match(/@/g) ?? []).length > 1) {
@@ -261,7 +262,7 @@ class Composer {
     el.setAttribute("aria-label", "写邮件");
     el.innerHTML = `
       <header class="composer-head">
-        <span class="composer-title">${esc(p.subject || (p.replyToId ? "回复" : "新邮件"))}</span>
+        <span class="composer-title ${p.subject ? "u" : ""}">${esc(p.subject || (p.replyToId ? "回复" : "新邮件"))}</span>
         <div class="composer-head-actions">
           <button class="icon-btn sm" data-act="popout" title="在独立窗口中编辑" aria-label="在独立窗口中编辑">${icon("external")}</button>
           <button class="icon-btn sm" data-act="min" title="最小化 (Esc)" aria-label="最小化">${icon("minimize")}</button>
@@ -353,7 +354,9 @@ class Composer {
     };
     el.querySelectorAll("[data-show]").forEach((b) => (b.onclick = () => this.showRow(b.dataset.show, true)));
     q(".subject").addEventListener("input", () => {
-      q(".composer-title").textContent = q(".subject").value || "新邮件";
+      const title = q(".composer-title");
+      title.classList.toggle("u", Boolean(q(".subject").value));
+      title.textContent = q(".subject").value || tr("新邮件");
       mark();
     });
     q(".from-local").addEventListener("input", () => this.fromChanged());
@@ -661,6 +664,7 @@ class Composer {
     this.destroy();
   }
   destroy() {
+    this.destroyed = true;
     this.el.classList.remove("show");
     const el = this.el;
     setTimeout(() => el.remove(), 180);
@@ -692,7 +696,7 @@ class Composer {
     }
     menu(anchor, [
       { header: "插入模板" },
-      ...(list.length ? list.map((t) => ({ label: t.name, icon: "template", onClick: () => this.applyTemplate(t) })) : [{ label: "还没有模板", disabled: true }]),
+      ...(list.length ? list.map((t) => ({ label: t.name, user: true, icon: "template", onClick: () => this.applyTemplate(t) })) : [{ label: "还没有模板", disabled: true }]),
       "-",
       { label: "把当前内容存为模板…", icon: "plus", onClick: () => this.saveAsTemplate() },
       { label: "管理模板", icon: "settings", onClick: () => (location.hash = "#/settings/templates") },
@@ -710,6 +714,7 @@ class Composer {
     const subj = this.el.querySelector(".subject");
     if (t.subject && !subj.value.trim()) {
       subj.value = t.subject;
+      this.el.querySelector(".composer-title").classList.add("u");
       this.el.querySelector(".composer-title").textContent = t.subject;
     }
     this.editor.area.dispatchEvent(new Event("input"));
@@ -771,7 +776,20 @@ class Composer {
   }
 
   // ---- 发送 ----
-  async send({ sendAt } = {}) {
+  // 防重入：双击发送按钮或连按两次快捷键时，只发出一封
+  async send(opts = {}) {
+    if (this.sending || this.destroyed) return;
+    this.sending = true;
+    this.el.classList.add("is-sending");
+    try {
+      return await this.doSend(opts);
+    } finally {
+      this.sending = false;
+      this.el?.classList.remove("is-sending");
+    }
+  }
+
+  async doSend({ sendAt } = {}) {
     const to = this.to.values();
     const cc = this.cc.values();
     const bcc = this.bcc.values();

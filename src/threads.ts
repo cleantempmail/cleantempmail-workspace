@@ -1,8 +1,8 @@
 // 会话汇总表与地址计数的维护：任何改动邮件的操作之后调用 touch()
 import type { Env } from "./env";
-import { indexMessage, peopleText } from "./search";
+import { ftsStatement, peopleText } from "./search";
 import { chunk, getSetting, now, placeholders, setSetting } from "./util";
-import { blobs } from "./storage";
+import { getMany } from "./storage";
 
 interface MsgMeta {
   id: string;
@@ -24,16 +24,26 @@ interface MsgMeta {
   deleted_at: number | null;
   delivery_status: string | null;
   is_bounce: number;
+  auth: string | null;
 }
 
 const META_COLS =
-  "id, thread_id, folder, mailbox, domain, from_addr, from_name, to_addrs, subject, snippet, created_at, is_read, has_attachments, starred, archived, spam, deleted_at, delivery_status, is_bounce";
+  "id, thread_id, folder, mailbox, domain, from_addr, from_name, to_addrs, subject, snippet, created_at, is_read, has_attachments, starred, archived, spam, deleted_at, delivery_status, is_bounce, auth";
+
+// 发件人通过 DMARC 验证：列表里才显示品牌头像，防止冒充的邮件显示官方 logo
+const verified = (m: MsgMeta) => {
+  try {
+    return m.auth ? JSON.parse(m.auth).dmarc === "pass" : false;
+  } catch {
+    return false;
+  }
+};
 
 export async function refreshThreads(env: Env, threadIds: string[]): Promise<void> {
   const ids = [...new Set(threadIds.filter(Boolean))];
   for (const part of chunk(ids, 80)) {
     const { results } = await env.DB.prepare(
-      `SELECT ${META_COLS} FROM messages WHERE thread_id IN (${placeholders(part.length)}) ORDER BY created_at, id`,
+      `SELECT ${META_COLS} FROM messages WHERE thread_id IN (${placeholders(part.length)}) ORDER BY created_at, rowid`,
     ).bind(...part).all<MsgMeta>();
     const byThread = new Map<string, MsgMeta[]>();
     for (const m of results) {
@@ -71,8 +81,8 @@ function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStateme
   return env.DB.prepare(
     `INSERT INTO threads (thread_id, sort_at, last_at, last_id, last_folder, last_mailbox, last_from_addr, last_from_name, last_to_addrs,
        subject, snippet, participants, mailboxes, domains, cnt, unread, has_att, starred, n_inbox, n_archive, n_sent, n_spam, n_trash, n_live,
-       trash_at, delivery)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       trash_at, delivery, last_verified)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(thread_id) DO UPDATE SET
        sort_at = MAX(excluded.last_at, COALESCE(threads.unsnoozed_at, 0)),
        last_at = excluded.last_at, last_id = excluded.last_id, last_folder = excluded.last_folder, last_mailbox = excluded.last_mailbox,
@@ -81,7 +91,7 @@ function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStateme
        mailboxes = excluded.mailboxes, domains = excluded.domains, cnt = excluded.cnt, unread = excluded.unread,
        has_att = excluded.has_att, starred = excluded.starred, n_inbox = excluded.n_inbox, n_archive = excluded.n_archive,
        n_sent = excluded.n_sent, n_spam = excluded.n_spam, n_trash = excluded.n_trash, n_live = excluded.n_live,
-       trash_at = excluded.trash_at, delivery = excluded.delivery`,
+       trash_at = excluded.trash_at, delivery = excluded.delivery, last_verified = excluded.last_verified`,
   ).bind(
     tid,
     lastAt,
@@ -109,55 +119,46 @@ function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStateme
     live.length,
     trash.length ? Math.max(...trash.map((m) => m.deleted_at!)) : null,
     lastSent?.delivery_status ?? null,
+    last.folder === "inbox" && verified(last) ? 1 : 0,
   );
 }
 
-export async function refreshMailboxStats(env: Env, mailboxes: string[]): Promise<void> {
-  const boxes = [...new Set(mailboxes.filter(Boolean))];
-  for (const part of chunk(boxes, 80)) {
-    await env.DB.batch([
-      env.DB.prepare(`DELETE FROM mailbox_stats WHERE mailbox IN (${placeholders(part.length)})`).bind(...part),
-      env.DB.prepare(
-        `INSERT INTO mailbox_stats (mailbox, domain, total, unread, spam, last_at)
-         SELECT mailbox, domain, COUNT(*),
-           SUM(CASE WHEN folder = 'inbox' AND is_read = 0 AND archived = 0 AND spam = 0 THEN 1 ELSE 0 END),
-           SUM(spam),
-           -- last_at：最近一封"进入收件箱"的邮件时间，前端轮询据此提示新邮件（不含已发送、垃圾邮件、被规则归档的邮件）
-           COALESCE(MAX(CASE WHEN folder = 'inbox' AND spam = 0 AND archived = 0 THEN created_at END), 0)
-         FROM messages WHERE mailbox IN (${placeholders(part.length)}) AND deleted_at IS NULL GROUP BY mailbox`,
-      ).bind(...part),
-    ]);
-  }
+// 地址计数由 messages 上的触发器增量维护（见 migrations/0007）；每天全量校准一次，防止意外偏差
+export async function reconcileStats(env: Env): Promise<void> {
+  const visible = "folder = 'inbox' AND spam = 0 AND archived = 0 AND COALESCE(parse_error, '') != 'pending'";
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM mailbox_stats"),
+    env.DB.prepare(
+      `INSERT INTO mailbox_stats (mailbox, domain, total, unread, spam, last_at)
+       SELECT mailbox, domain, COUNT(*), SUM(CASE WHEN ${visible} AND is_read = 0 THEN 1 ELSE 0 END), SUM(spam),
+         COALESCE(MAX(CASE WHEN ${visible} THEN created_at END), 0)
+       FROM messages WHERE deleted_at IS NULL GROUP BY mailbox`,
+    ),
+    env.DB.prepare(
+      `INSERT INTO stats_total (id, unread, last_at) SELECT 1, COALESCE(SUM(unread), 0), COALESCE(MAX(last_at), 0) FROM mailbox_stats
+       ON CONFLICT (id) DO UPDATE SET unread = excluded.unread, last_at = MAX(stats_total.last_at, excluded.last_at)`,
+    ),
+  ]);
 }
 
-// 改动若干邮件后统一刷新
-export async function touch(env: Env, opts: { threads?: string[]; mailboxes?: string[]; messageIds?: string[] }): Promise<void> {
+// 改动若干邮件后刷新会话汇总（地址计数由触发器维护，不需要再算）
+export async function touch(env: Env, opts: { threads?: string[]; messageIds?: string[] }): Promise<void> {
   let threads = opts.threads ?? [];
-  let boxes = opts.mailboxes ?? [];
   if (opts.messageIds?.length) {
     for (const part of chunk(opts.messageIds, 90)) {
-      const { results } = await env.DB.prepare(`SELECT thread_id, mailbox FROM messages WHERE id IN (${placeholders(part.length)})`)
+      const { results } = await env.DB.prepare(`SELECT thread_id FROM messages WHERE id IN (${placeholders(part.length)})`)
         .bind(...part)
-        .all<{ thread_id: string; mailbox: string }>();
+        .all<{ thread_id: string }>();
       threads = threads.concat(results.map((r) => r.thread_id));
-      boxes = boxes.concat(results.map((r) => r.mailbox));
-    }
-  }
-  if (threads.length && !opts.mailboxes) {
-    for (const part of chunk([...new Set(threads)], 90)) {
-      const { results } = await env.DB.prepare(`SELECT DISTINCT mailbox FROM messages WHERE thread_id IN (${placeholders(part.length)})`)
-        .bind(...part)
-        .all<{ mailbox: string }>();
-      boxes = boxes.concat(results.map((r) => r.mailbox));
     }
   }
   await refreshThreads(env, threads);
-  await refreshMailboxStats(env, boxes);
 }
 
 // ---------- 回填（升级到汇总表后，首次运行时分批处理已有数据） ----------
 
-export async function backfillStep(env: Env, budget = 300): Promise<{ done: boolean; processed: number }> {
+// 每批数量要小：免费版每次调用最多 50 次 D1 查询
+export async function backfillStep(env: Env, budget = 40): Promise<{ done: boolean; processed: number }> {
   const state = (await getSetting(env, "backfill_v3")) ?? "0";
   if (state === "done") return { done: true, processed: 0 };
   const cursor = Number(state) || 0;
@@ -169,17 +170,19 @@ export async function backfillStep(env: Env, budget = 300): Promise<{ done: bool
     await setSetting(env, "backfill_v3", "done");
     return { done: true, processed: 0 };
   }
-  // 全文索引：正文从 R2 读取（读不到就用摘要）
+  // 全文索引：正文从存储批量读取（读不到就用摘要），索引语句合并成一个 batch
+  const bodies = await getMany(env, results.map((m) => `msg/${m.id}/body.json`)).catch(() => new Map());
+  const stmts: D1PreparedStatement[] = [];
   for (const m of results) {
     let body = m.snippet ?? "";
     try {
-      const obj = await blobs(env).get(`msg/${m.id}/body.json`);
-      if (obj) body = ((await obj.json<{ text?: string }>()).text ?? body) as string;
+      const obj = bodies.get(`msg/${m.id}/body.json`);
+      if (obj) body = ((await obj.json()).text ?? body) as string;
     } catch {}
-    await indexMessage(env, m.rid, { subject: m.subject ?? "", people: peopleText(m.from_name, m.from_addr, m.to_addrs, m.cc_addrs, m.mailbox), body });
+    stmts.push(ftsStatement(env, m.rid, { subject: m.subject ?? "", people: peopleText(m.from_name, m.from_addr, m.to_addrs, m.cc_addrs, m.mailbox), body }));
   }
+  await env.DB.batch(stmts);
   await refreshThreads(env, results.map((r) => r.thread_id));
-  await refreshMailboxStats(env, results.map((r) => r.mailbox));
   await setSetting(env, "backfill_v3", String(results[results.length - 1].rid));
   return { done: false, processed: results.length };
 }

@@ -185,3 +185,15 @@ export function noteStorageMode(env: Env): Promise<unknown> | null {
     .run()
     .catch(() => {});
 }
+
+// 系统事件（收信失败、额度用完等），设置 → 系统状态里显示。D1 本身出错时写不进去，所以只能尽力而为
+export async function logEvent(env: Env, kind: string, detail: Record<string, unknown>): Promise<void> {
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO events (kind, detail, created_at) VALUES (?, ?, ?)").bind(kind, JSON.stringify(detail).slice(0, 2000), now()),
+      env.DB.prepare("DELETE FROM events WHERE created_at < ?").bind(now() - 30 * 86400),
+    ]);
+  } catch (e) {
+    console.error("logEvent failed", kind, detail, e);
+  }
+}

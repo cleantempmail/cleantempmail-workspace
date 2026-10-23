@@ -73,7 +73,8 @@
 - 深色模式、紧凑密度、可拖动列表宽度、可关闭阅读窗格、键盘快捷键（按 `?`）
 - 手机端适配：底部标签栏、抽屉侧栏、阅读页滑入、滑动手势、下拉刷新
 - 中文 / English 界面
-- 导出 mbox、存储用量
+- 导入（mbox / .eml）、导出 mbox、存储用量
+- 系统状态：收信异常记录、当日用量对照免费额度、新版本提示
 
 ## 部署
 
@@ -102,15 +103,7 @@
 
 想用自己的域名访问：控制台打开这个 Worker → **Settings → Domains & Routes → Add → Custom domain**。
 
-**以后更新**：复制到你 GitHub 的仓库不会自动同步本仓库的新版本。在你自己的仓库里执行下面的命令，推送后 Cloudflare 会自动重新部署，并自动更新数据库结构：
-
-```bash
-git remote add upstream https://github.com/cleantempmail/cleantempmail-workspace.git   # 只需一次
-git pull upstream main     # 免绑卡版改成：git pull upstream lite
-git push
-```
-
-如果 `wrangler.jsonc` 出现冲突，保留你自己的 `name`、`database_id` 和 KV 的 `id`。
+**以后更新**：不需要命令行。打开你 GitHub 上的这个仓库 → **Actions** → **Update from upstream** → **Run workflow**，Cloudflare 会自动重新部署并更新数据库结构。详见[更新到新版本](#更新到新版本)。
 
 ### 方式二：命令行部署
 
@@ -206,11 +199,24 @@ npx wrangler secret put CF_OAUTH_CLIENT_SECRET
 
 ### 更新到新版本
 
+有新版本时，「设置 → 系统状态」会显示，管理员打开应用时也会提示一次。更新时先更新数据库结构，再部署新代码，收发不中断。
+
+**一键部署的**（不需要命令行）：打开你 GitHub 上的这个仓库 → **Actions** → **Update from upstream** → **Run workflow**。几分钟后 Cloudflare 会自动重新部署。
+
+- 想每周自动更新：仓库 **Settings → Secrets and variables → Actions → Variables**，新建变量 `AUTO_UPDATE`，值填 `true`
+- 更新会把程序文件换成最新版本，`wrangler.jsonc` 里你自己的 Worker 名称、数据库 / KV 的 ID、访问域名会保留
+- 2026 年 10 月之前部署的仓库里还没有这个工作流：在 GitHub 网页上新建文件 `.github/workflows/update.yml`，把[这个文件](.github/workflows/update.yml)的内容粘贴进去提交，之后就能在 Actions 里看到了
+- 一键部署的仓库和本仓库没有共同的 git 历史，所以 `git pull upstream main` 用不了，请用上面的方法（命令行用户可以在自己的仓库里运行 `node scripts/update-from-upstream.mjs` 后 `git push`）
+
+**命令行部署的**（`git clone` 的）：
+
 ```bash
 git pull
 npm install
 npm run update    # 先更新数据库结构，再部署新代码，更新过程中收发不中断
 ```
+
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 免绑卡模式
 
@@ -227,7 +233,7 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 - **容量**：D1 存储库 500 MB 足够存几万封普通邮件；KV 的 1 GB 主要被大附件占用。用量可以在「设置 → 数据」查看，快满时会标红
 - **KV 每天最多写入 1000 次**：只有大于 512 KB 的文件会用到，普通邮件一次都不用。大附件特别多的话当天可能存不下
 - **大附件刚收到时**：KV 在全球同步需要几十秒，其他地区偶尔要稍等一会儿才能打开
-- 存储方式在第一次部署后就固定下来，之后开通了 R2 也不会自动切换（避免旧邮件读不到）。目前还不支持把已有邮件迁移到 R2
+- 存储方式在第一次部署后就固定下来，之后开通了 R2 也不会自动切换（避免旧邮件读不到）。部署脚本发现配置要求的存储方式和已有邮件的不一致时会拒绝部署；确实要切换（例如新部署、不在乎旧邮件），加参数 `npm run deploy -- --switch-storage`。目前还不支持把已有邮件迁移到 R2
 
 ### 常见问题
 
@@ -239,6 +245,10 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 - **Resend 提示名额已满**：免费版最多 3 个域名。先释放一个不常用的域名（见第 6 步），或升级 Resend 套餐。域名多的话，开通 Workers Paid 用 Cloudflare 发件更省事：每月含 3,000 封，不限域名数
 - **部署后找不到访问地址**：看构建日志最后一行的「访问地址」。如果没有，在控制台打开这个 Worker → **Settings → Domains & Routes**，启用 workers.dev 或添加自定义域名
 - **Workers AI 功能不可用**：AI 摘要、翻译、起草回复使用 Workers AI，有每日免费额度，用完后会提示稍后再试
+- **怎么知道收信有没有出问题**：「设置 → 系统状态」显示最近的收信异常（出错的邮件原文都已保存，可以下载）、今天的 D1 / Workers 用量和免费额度的对比（令牌需要「Account Analytics · Read」权限）。有异常或额度快用完时，管理员打开应用会看到提示
+- **免费版收大邮件**：免费版每次处理只有 10 ms CPU。附件很大的邮件可能来不及解析，这时邮件仍然会出现在收件箱里，原文完整保存，可以在「更多」里下载
+- **从 Gmail 等迁移过来**：「设置 → 数据 → 导入邮件」支持 mbox（Gmail 的「Google 数据导出」、Thunderbird、Apple Mail）和 .eml。免费套餐每天大约能导入 3,000 封，超出后会暂停，第二天重新导入同一个文件即可
+- **我的仓库里有个 lite-branch 工作流**：那是本仓库用来维护免绑卡版分支的，在你自己的仓库里不需要，可以删掉 `.github/workflows/lite-branch.yml`（新版本已经限定只在本仓库运行）
 
 ## 套餐说明
 
@@ -260,7 +270,12 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 - 编辑器对粘贴内容、引用原文、草稿做白名单过滤
 - 写请求校验 `Sec-Fetch-Site` / `Origin` 并要求 `application/json`（防同主域兄弟子域的 CSRF）
 - 会话 Cookie 使用 `__Host-` 前缀；数据库只保存会话 id 的哈希
-- 管理员密码用 PBKDF2 哈希保存，登录失败按 IP 和全局限流；支持通行密钥（WebAuthn）
+- 管理员密码用 PBKDF2 哈希保存；登录按 IP（IPv6 按 /64）限流。有人用大量 IP 猜密码时只暂停密码登录，通行密钥登录和用 API 令牌重设密码不受影响，管理员不会被锁在外面
+- 支持通行密钥（WebAuthn）
+- 成员的邮件登录链接打开后要点确认才登录，邮件里藏的链接不能悄悄替换当前登录的账户；邮件正文只能加载隐私代理和自身的内嵌图片
+- 一键退订会在确认框里写明以哪个地址给谁发退订邮件，只接受单个合法地址
+- 品牌头像只给通过 DMARC 验证的发件人显示，冒充的邮件不会显示官方 logo
+- 团队成员的会话列表只显示权限范围内的邮件，也不能转发或回复范围以外的邮件
 - 首次设置和重设密码都要求提供能访问部署账户的 API 令牌，别人无法抢先认领管理员
 - 设置 `APP_SECRET` 后，token 与 API Key 的加密密钥和数据分开存放
 - OAuth token 刷新带条件更新，避免并发刷新互相作废
@@ -280,7 +295,9 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 | 发信 | `send_email` 绑定（Cloudflare）或 Resend API，可配置互为备用 |
 | 图片代理 | `GET /api/img`：只接受服务端签名过的链接，不带 Cookie / Referer，边缘缓存一天 |
 | 投递状态 | GraphQL `emailSendingAdaptive` |
-| 定时任务 | 每分钟：定时发送、稍后提醒、投递状态；每天：清理废纸篓/垃圾邮件/过期附件/过期会话 |
+| 收信可靠性 | 先存原文并用信头建记录，再解析补全；中途被中断（大邮件超出 CPU 限制）的由定时任务收尾，邮件不会丢 |
+| 计数 | 地址的总数 / 未读数由 D1 触发器增量维护，侧栏统计和轮询只读少量行 |
+| 定时任务 | 每分钟：定时发送、稍后提醒、收尾中断的收信、清理过期的废纸篓和垃圾邮件、投递状态；每天：过期附件、过期会话、计数校准 |
 
 ## 本地开发
 
@@ -292,6 +309,17 @@ npm run dev                              # AI 绑定需要远程连接：先 wra
 # 模拟收信：
 curl -X POST "http://localhost:8787/cdn-cgi/handler/email?from=a@gmail.com&to=hi@example.com" --data-binary @test.eml
 ```
+
+自动化测试（每次在临时目录启动全新的本地 Worker，用模拟的 Resend 发件，不会碰你的数据）：
+
+```bash
+npm test                 # 标准版（R2）
+npm run test:lite        # 免绑卡版（D1 + KV）
+# 浏览器测试需要 Playwright（没装会跳过）：
+npm i --no-save playwright && npx playwright install chromium
+```
+
+推送到 GitHub 后 CI 会自动跑类型检查和这两套测试。
 
 ## 目录
 
@@ -315,11 +343,15 @@ src/scope.ts             团队成员的访问范围
 src/routes/messages.ts   会话列表、整理操作、HTML 正文、附件、退订、统计
 src/routes/compose.ts    上传、草稿、联系人、身份、模板、发送、定时发送
 src/routes/org.ts        地址、屏蔽名单、规则、标签、成员、推送、AI、导出、投递状态、品牌头像
+src/routes/system.ts     导入、系统状态（收信异常、当日用量、存储方式检查）、版本检查
+src/version.ts           版本号
 public/js/               前端（原生 ES 模块，无构建步骤）
 public/sw.js             Service Worker（推送通知）
 public/brand/            logo 与图标
 scripts/deploy.mjs       部署：自动选择存储方式、先迁移数据库再部署
 scripts/lite-config.mjs  生成免绑卡版配置（.github/workflows/lite-branch.yml 用它维护 lite 分支）
+scripts/update-from-upstream.mjs  更新到最新版本（Actions 里的 Update from upstream 用它）
+tests/                   自动化测试（npm test）
 ```
 
 ## 许可证

@@ -5,7 +5,8 @@ import { openComposer } from "./compose.js";
 import { icon } from "./icons.js";
 import { emit, navigate, store, viewTitle } from "./store.js";
 import { confirmDialog, labelMenu, menu, modal, pickDateTime, toast, toastError } from "./ui.js";
-import { $, avatar, avatarColor, dateGroup, displayName, esc, fmtListTime, fmtWhen, h, parseList, timePresets } from "./util.js";
+import { $, avatar, avatarColor, dateGroup, displayName, esc, fmtListTime, fmtWhen, h, lang, parseList, timePresets } from "./util.js";
+import { t as tr } from "./i18n.js";
 
 const pane = () => $(".list-pane");
 
@@ -120,10 +121,11 @@ function participantsText(t) {
   const ps = t.participants || [];
   if (store.route.view === "sent") {
     const to = parseList(t.to_addrs);
-    return "发给 " + (to.map((a) => displayName(a.name, a.address)).join("、") || "—");
+    // 发件人一栏不经过界面翻译（里面是人名），固定文字在这里翻译
+    return `${tr("发给")} ` + (to.map((a) => displayName(a.name, a.address)).join(lang() === "en" ? ", " : "、") || "—");
   }
   if (!ps.length) return displayName(t.from_name, t.from_addr);
-  const names = ps.map((p) => p.name);
+  const names = ps.map((p) => (p.me ? tr("我") : p.name));
   return names.length > 3 ? `${names[0]} … ${names.slice(-2).join("、")}` : names.join("、");
 }
 
@@ -133,7 +135,7 @@ function labelChips(ids) {
   return (ids || [])
     .map((id) => store.labels.find((l) => l.id === id))
     .filter(Boolean)
-    .map((l) => `<span class="tag label-tag" style="--lc:${esc(l.color)}"><span class="label-dot"></span>${esc(l.name)}</span>`)
+    .map((l) => `<span class="tag label-tag" style="--lc:${esc(l.color)}"><span class="label-dot"></span><span class="u">${esc(l.name)}</span></span>`)
     .join("");
 }
 
@@ -160,7 +162,7 @@ function rowHtml(t, focusable) {
         <div class="row-bottom"><span class="row-snippet">${esc(t.error || (t.text || "").slice(0, 140))}</span>
           <span class="row-tags">${boxTag(t.from, "发件地址")}${t.attachments?.length ? `<span class="tag">${icon("paperclip")}${t.attachments.length}</span>` : ""}</span></div>
       </div>
-      <div class="row-hover"><button class="icon-btn sm" data-draft-del title="${sched ? "取消定时发送" : "删除草稿"}" aria-label="删除">${icon(sched ? "x" : "trash")}</button></div>
+      <div class="row-hover">${sched && t.status === "failed" ? `<button class="icon-btn sm" data-sched-retry title="重新发送" aria-label="重新发送">${icon("refresh")}</button>` : ""}<button class="icon-btn sm" data-draft-del title="${sched ? "取消定时发送" : "删除草稿"}" aria-label="删除">${icon(sched ? "x" : "trash")}</button></div>
     </div>`;
   }
   const isSent = t.folder === "sent";
@@ -174,7 +176,7 @@ function rowHtml(t, focusable) {
   return `<div class="row ${t.unread ? "unread" : ""} ${sel ? "selected" : ""} ${active ? "active" : ""}" data-tid="${esc(t.thread_id)}" role="listitem" ${tab}
       aria-label="${esc(`${t.unread ? "未读，" : ""}${participantsText(t)}，${t.subject || "无主题"}`)}">
     <div class="row-lead">
-      ${avatar(fromName === "我" ? "我" : t.from_name, isSent ? t.mailbox : t.from_addr, "", { brand: !isSent })}
+      ${avatar(fromName === "我" ? "我" : t.from_name, isSent ? t.mailbox : t.from_addr, "", { brand: !isSent && t.verified })}
       <label class="check" title="选择"><input type="checkbox" ${sel ? "checked" : ""} aria-label="选择" tabindex="-1" /><span></span></label>
     </div>
     <div class="row-main">
@@ -219,6 +221,10 @@ export function renderList() {
   }
 
   const unreadInView = r.view === "inbox" ? store.stats.unread : 0;
+  // 同一个视图里重新渲染（打开邮件、勾选、归档、轮询刷新）时保持滚动位置；换了视图才回到顶部
+  const viewKey = `${r.view}|${r.arg ?? ""}|${L.q ?? ""}|${L.filter ?? ""}`;
+  const keepTop = el.dataset.viewKey === viewKey ? el.querySelector(".list-body")?.scrollTop ?? 0 : 0;
+  el.dataset.viewKey = viewKey;
   el.innerHTML = `
     <div class="list-head ${nSel ? "selecting" : ""}">
       ${
@@ -248,12 +254,13 @@ export function renderList() {
             ["attachments", "有附件"],
           ]
             .map(([k, label]) => `<button class="filter ${L.filter === k ? "on" : ""}" data-filter="${k}" role="tab" aria-selected="${L.filter === k}">${label}</button>`)
-            .join("")}${L.q ? `<span class="search-chip">${icon("search")}“${esc(L.q)}”<button data-clear-q aria-label="清除搜索">${icon("x")}</button></span>` : ""}</div>`
+            .join("")}${L.q ? `<span class="search-chip">${icon("search")}<span class="u">“${esc(L.q)}”</span><button data-clear-q aria-label="清除搜索">${icon("x")}</button></span>` : ""}</div>`
         : ""
     }
     ${["trash", "spam"].includes(r.view) && L.threads.length ? `<div class="notice info sm list-notice">${icon("info")}<span>${r.view === "trash" ? "废纸篓" : "垃圾邮件"}中的邮件会在 30 天后自动永久删除。</span></div>` : ""}
     <div class="ptr" aria-hidden="true">${icon("refresh")}</div>
     <div class="list-body" role="list" aria-label="${esc(viewTitle())}">${groups}</div>`;
+  if (keepTop) el.querySelector(".list-body").scrollTop = keepTop;
   bindList(el);
 }
 
@@ -308,6 +315,17 @@ async function onRowClick(e) {
   const tid = row.dataset.tid;
   if (row.classList.contains("draft")) {
     const d = L.threads.find((t) => t.thread_id === tid);
+    // 发送失败的定时邮件：立即重试
+    if (e.target.closest("[data-sched-retry]")) {
+      e.stopPropagation();
+      const ok = await api(`/scheduled/${d.scheduledId}/retry`, { body: {} }).then(
+        () => true,
+        (err) => (toastError(err), false),
+      );
+      if (ok) toast("已重新安排发送，1 分钟内发出", { type: "success" });
+      emit("scheduled:changed");
+      return;
+    }
     if (e.target.closest("[data-draft-del]")) {
       e.stopPropagation();
       if (d.scheduledId) {
@@ -315,8 +333,11 @@ async function onRowClick(e) {
         if (res) toast("已取消定时发送，邮件内容已放回草稿", { action: { label: "编辑", onClick: () => openComposer({ ...res.payload, draftId: res.payload.draftId }) } });
         if (res?.payload) await api(`/drafts/${res.payload.draftId || crypto.randomUUID()}`, { method: "PUT", body: res.payload }).catch(() => {});
       } else {
-        await api(`/drafts/${d.id}`, { method: "DELETE" }).catch(toastError);
-        toast("草稿已删除");
+        const ok = await api(`/drafts/${d.id}`, { method: "DELETE" }).then(
+          () => true,
+          (err) => (toastError(err), false),
+        );
+        if (ok) toast("草稿已删除");
       }
       emit("drafts:changed");
       return;
@@ -580,10 +601,11 @@ export async function threadAction(tids, action, { silent = false, until, labelI
   if (!tids.length) return;
   const L = store.list;
   const view = store.route.view;
-  const apiAction = action === "spam_delete" ? "delete" : action;
-  if ((action === "delete" || action === "spam_delete") && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话将被永久删除，无法恢复。`, confirmLabel: "永久删除", danger: true }))) return;
+  // 垃圾邮件里的"永久删除"只删除被判为垃圾的邮件，同一会话里的正常往来和已发送都保留
+  const apiAction = action === "spam_delete" ? "purge_spam" : action;
+  if (action === "delete" && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话将被永久删除，无法恢复。`, confirmLabel: "永久删除", danger: true }))) return;
+  if (action === "spam_delete" && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话中的垃圾邮件将被永久删除，无法恢复。会话里的正常邮件不受影响。`, confirmLabel: "永久删除", danger: true }))) return;
 
-  // 垃圾邮件里的"永久删除"需要先把它们移到废纸篓，后端只彻底删除废纸篓中的邮件
   const removed = removesFromView(action, view);
   const before = L.threads;
   if (removed) L.threads = L.threads.filter((t) => !tids.includes(t.thread_id));
@@ -603,8 +625,10 @@ export async function threadAction(tids, action, { silent = false, until, labelI
   if (removed && tids.includes(store.route.thread)) navigate(view, store.route.arg, null);
 
   try {
-    if (action === "spam_delete") await api("/threads/action", { body: { threadIds: tids, action: "trash" } });
-    await api("/threads/action", { body: { threadIds: tids, action: apiAction, until, labelId, blockSender } });
+    // 大批量分成几次请求（每次请求的数据库查询次数有上限）
+    for (let i = 0; i < tids.length; i += 300) {
+      await api("/threads/action", { body: { threadIds: tids.slice(i, i + 300), action: apiAction, until, labelId, blockSender } });
+    }
     emit("stats:refresh");
     if (!silent && !["read", "star", "unstar", "label", "unlabel"].includes(action)) {
       const undo = UNDO[action];

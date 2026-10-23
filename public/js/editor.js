@@ -47,7 +47,8 @@ function cleanNode(node, doc) {
       const val = attr.value;
       let keep = false;
       if (name === "href" && tag === "a") keep = /^(https?:|mailto:)/i.test(val.trim());
-      else if (name === "src" && tag === "img") keep = /^(data:image\/(png|jpe?g|gif|webp);|\/api\/)/i.test(val.trim());
+      // 站内图片只允许邮件附件和图片代理：防止模板、草稿里写 <img src="/auth/..."> 之类的地址在本站发出请求
+      else if (name === "src" && tag === "img") keep = /^(data:image\/(png|jpe?g|gif|webp);|\/api\/messages\/[\w-]+\/attachments\/\d+(\?inline=1)?$|\/api\/img\?[\w=&%.~-]+$)/i.test(val.trim());
       else if (name === "style") {
         const s = cleanStyle(val);
         if (s) child.setAttribute("style", s);

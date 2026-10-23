@@ -2,9 +2,9 @@
 import { Hono } from "hono";
 import type { AppEnv, Env, Scope } from "../env";
 import { parseRefs, storeSent, type SentAttachment, type StoredBody } from "../mail";
-import { SendError, sendVia, type Outgoing, type Provider } from "../providers";
-import { canUseAddress, FULL, parseScope } from "../scope";
-import { b64encode, domainOf, isEmail, now, placeholders, randomId } from "../util";
+import { resendMessageId, SendError, sendVia, type Outgoing, type Provider } from "../providers";
+import { canUseAddress, FULL, messageScopeSql, parseScope } from "../scope";
+import { b64encode, domainOf, isEmail, logEvent, now, placeholders, randomId } from "../util";
 import { blobs } from "../storage";
 
 export const compose = new Hono<AppEnv>();
@@ -93,13 +93,20 @@ compose.delete("/drafts/:id", async (c) => {
 compose.get("/contacts", async (c) => {
   const s = c.get("session");
   const q = (c.req.query("q") ?? "").trim().toLowerCase();
-  const like = `%${q.replace(/[%_]/g, "")}%`;
+  // LIKE 模式最长 50 字节（D1 限制）
+  const like = `%${q.replace(/[%_]/g, "").slice(0, 40)}%`;
   const scopeSql = s.scope.all ? "1=1" : s.scope.domains.length ? `domain IN (${placeholders(s.scope.domains.length)})` : "0";
+  // 沿 (n DESC, last_at DESC) 索引扫描，凑够即停；同一地址在多个域名下各有一行，取回后再去重
   const { results } = await c.env.DB.prepare(
-    `SELECT address, MAX(name) AS name, SUM(n) AS n, MAX(last_at) AS last FROM contacts
-     WHERE ${scopeSql} AND (address LIKE ? OR lower(name) LIKE ?) GROUP BY address ORDER BY n DESC, last DESC LIMIT 8`,
+    `SELECT address, name FROM contacts WHERE ${scopeSql} AND (address LIKE ? OR lower(name) LIKE ?) ORDER BY n DESC, last_at DESC LIMIT 24`,
   ).bind(...(s.scope.all ? [] : s.scope.domains), like, like).all<{ address: string; name: string | null }>();
-  return c.json(results.map((r) => ({ address: r.address, name: r.name })));
+  const seen = new Map<string, { address: string; name: string | null }>();
+  for (const r of results) {
+    const cur = seen.get(r.address);
+    if (!cur) seen.set(r.address, { address: r.address, name: r.name });
+    else if (!cur.name && r.name) cur.name = r.name;
+  }
+  return c.json([...seen.values()].slice(0, 8));
 });
 
 // ---------- 发件身份（显示名 + 签名） ----------
@@ -246,8 +253,20 @@ export async function performSend(
   }
   if (!chain.length) throw new HttpError(400, "这个域名还没有开通发件服务");
 
-  // 先只看大小（不把文件读进内存）；超过主服务上限时直接用上限更大的备用服务
+  // 引用原邮件的附件（转发）和回复对象都必须在自己的权限范围内
   const refs = (req.attachments ?? []).slice(0, 32);
+  if (!scope.all) {
+    const ids = [...new Set([...refs.flatMap((r) => ("messageId" in r ? [r.messageId] : [])), ...(req.replyToId ? [req.replyToId] : [])])];
+    if (ids.length) {
+      const ms = messageScopeSql(scope);
+      const { results } = await env.DB.prepare(`SELECT id FROM messages WHERE id IN (${placeholders(ids.length)}) AND ${ms.sql}`)
+        .bind(...ids, ...ms.args)
+        .all<{ id: string }>();
+      if (results.length !== ids.length) throw new HttpError(403, "引用的邮件不存在或不在你的权限范围内");
+    }
+  }
+
+  // 先只看大小（不把文件读进内存）；超过主服务上限时直接用上限更大的备用服务
   const sizes = await Promise.all(refs.map((r) => attachmentSize(env, r)));
   const total = encodedSize(sizes.reduce((a, b) => a + b, 0)) + (req.text?.length ?? 0) + (req.html?.length ?? 0);
   const usable = chain.filter((p) => total <= LIMITS[p]);
@@ -279,6 +298,8 @@ export async function performSend(
     }
   }
 
+  // 自己生成 Message-ID：对方回复时 In-Reply-To 指向它，才能可靠地归到同一个会话
+  const ownMessageId = `<${randomId(12)}.${Date.now().toString(36)}@${domainOf(from)}>`;
   const outgoing: Outgoing = {
     from: { email: from, name: req.fromName?.trim() || undefined },
     to,
@@ -288,6 +309,7 @@ export async function performSend(
     text: req.text ?? "",
     html: req.html || undefined,
     headers,
+    messageId: ownMessageId,
     attachments: attachments.map((a) => ({ filename: a.filename, type: a.type, content: b64encode(a.data) })),
     idempotencyKey: req.draftId ? `draft-${req.draftId}` : undefined,
   };
@@ -309,6 +331,11 @@ export async function performSend(
       console.warn(`send failover ${provider} → ${next}`, e.code, e.message);
       via = e.message;
     }
+  }
+  // Resend 返回的 id 不是 Message-ID：查一次实际使用的 Message-ID（失败就用自己生成的）
+  if (provider === "resend" && providerMessageId && !providerMessageId.includes("@")) {
+    const mid = await resendMessageId(env, providerMessageId).catch(() => null);
+    if (mid) providerMessageId = mid;
   }
   if (provider !== chain[0]) {
     via = via
@@ -333,7 +360,7 @@ export async function performSend(
       threadId,
       provider,
       providerMessageId,
-      messageId: null,
+      messageId: ownMessageId,
       attachments,
     });
   } catch (e: any) {
@@ -383,11 +410,20 @@ compose.delete("/scheduled/:id", async (c) => {
   return c.json({ ok: true, payload: JSON.parse(row.payload) });
 });
 
-// 定时任务调用：发送到期的邮件
-export async function runScheduled(env: Env): Promise<void> {
+// 定时任务调用：发送到期的邮件。
+// 每次只领取 2 封（每封要十几次 D1 查询，免费版每次调用最多 50 次）；领取时记下时间，
+// 中途被中断而停在"发送中"超过 10 分钟的改为失败（不自动重发，避免对方收到两封），用户可以重试或取消
+const CLAIM = 2;
+const MAX_ATTEMPTS = 3;
+export async function runScheduled(env: Env): Promise<number> {
+  const t = now();
+  await env.DB.prepare(
+    "UPDATE scheduled SET status = 'failed', error = '发送过程被中断，无法确认是否已经发出。请到「已发送」确认后再决定是否重试' WHERE status = 'sending' AND COALESCE(claimed_at, send_at) < ?",
+  ).bind(t - 600).run();
   const { results } = await env.DB.prepare(
-    "UPDATE scheduled SET status = 'sending' WHERE id IN (SELECT id FROM scheduled WHERE status = 'pending' AND send_at <= ? LIMIT 20) RETURNING id, owner, payload",
-  ).bind(now()).all<{ id: string; owner: string; payload: string }>();
+    `UPDATE scheduled SET status = 'sending', claimed_at = ?, attempts = attempts + 1
+     WHERE id IN (SELECT id FROM scheduled WHERE status = 'pending' AND send_at <= ? ORDER BY send_at LIMIT ${CLAIM}) RETURNING id, owner, payload, attempts`,
+  ).bind(t, t).all<{ id: string; owner: string; payload: string; attempts: number }>();
   for (const r of results) {
     let scope: Scope = FULL;
     if (r.owner.startsWith("member:")) {
@@ -398,9 +434,26 @@ export async function runScheduled(env: Env): Promise<void> {
       await performSend(env, JSON.parse(r.payload), scope, r.owner);
       await env.DB.prepare("UPDATE scheduled SET status = 'sent' WHERE id = ?").bind(r.id).run();
     } catch (e: any) {
-      await env.DB.prepare("UPDATE scheduled SET status = 'failed', error = ? WHERE id = ?").bind(String(e?.message ?? e).slice(0, 300), r.id).run();
+      const msg = String(e?.message ?? e).slice(0, 300);
+      // 限流、额度这类暂时性错误（发件服务明确没有收下）：5 分钟后自动重试，最多 3 次
+      if (e instanceof SendError && e.failover && r.attempts < MAX_ATTEMPTS) {
+        await env.DB.prepare("UPDATE scheduled SET status = 'pending', send_at = ?, error = ? WHERE id = ?").bind(now() + 300, msg, r.id).run();
+      } else {
+        await env.DB.prepare("UPDATE scheduled SET status = 'failed', error = ? WHERE id = ?").bind(msg, r.id).run();
+        await logEvent(env, "scheduled_failed", { id: r.id, error: msg });
+      }
     }
   }
   // 发出超过 7 天的记录清掉
   await env.DB.prepare("DELETE FROM scheduled WHERE status = 'sent' AND send_at < ?").bind(now() - 7 * 86400).run();
+  return results.length;
 }
+
+// 失败的定时邮件：立即重试
+compose.post("/scheduled/:id/retry", async (c) => {
+  const row = await c.env.DB.prepare(
+    "UPDATE scheduled SET status = 'pending', send_at = ?, error = NULL, attempts = 0 WHERE id = ? AND owner = ? AND status = 'failed' RETURNING id",
+  ).bind(now(), c.req.param("id"), c.get("session").userId).first();
+  if (!row) return c.json({ error: "只能重试发送失败的邮件" }, 404);
+  return c.json({ ok: true });
+});

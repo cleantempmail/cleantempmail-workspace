@@ -1,7 +1,7 @@
 // 不依赖 OAuth 的管理员登录：
 // - 密码：PBKDF2-SHA256（免费版每次请求只有 10ms CPU，迭代次数取约 4ms 的量，再配合失败限流）
 // - 通行密钥：WebAuthn（ES256 / RS256），只校验签名，不校验设备证明（attestation: none）
-// - 登录失败限流：每个 IP 15 分钟 10 次，全局 15 分钟 100 次
+// - 登录限流：见下面「失败限流」
 import type { Env } from "./env";
 import { b64url, b64urlDecode, now, randomId } from "./util";
 
@@ -37,26 +37,47 @@ export function passwordProblem(password: unknown): string | null {
 }
 
 // ---------- 失败限流 ----------
+// - 每个 IP（IPv6 按 /64 计）15 分钟 10 次
+// - 全局 15 分钟 100 次只限制密码登录：有人用大量 IP 猜密码时，密码登录暂停，
+//   但通行密钥登录和用 API 令牌重设密码不受影响（这两种都没法暴力破解），管理员不会被锁在外面
+// - 先计数再校验（原子自增），并发请求不能绕过上限；登录成功后清零
 const WINDOW = 15 * 60;
-const LIMITS = { ip: 10, global: 100 };
+const LIMITS = { ip: 10, global: 100, challenge: 30 };
 
-export async function tooManyAttempts(env: Env, ip: string): Promise<boolean> {
-  const { results } = await env.DB.prepare("SELECT key, count FROM auth_attempts WHERE key IN (?, 'global') AND reset_at > ?").bind(`ip:${ip}`, now()).all<{ key: string; count: number }>();
-  return results.some((r) => r.count >= (r.key === "global" ? LIMITS.global : LIMITS.ip));
+// IPv6 一个用户通常有整个 /64，按 /64 计数，否则换地址就能绕过
+export function ipKey(ip: string): string {
+  if (!ip.includes(":")) return ip;
+  const [head, tail = ""] = ip.split("::");
+  const a = head ? head.split(":") : [];
+  const b = tail ? tail.split(":") : [];
+  const full = ip.includes("::") ? [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill("0"), ...b] : a;
+  return full.slice(0, 4).map((x) => x.toLowerCase().replace(/^0+(?=.)/, "")).join(":") + "::/64";
 }
 
-export async function recordFailure(env: Env, ip: string): Promise<void> {
+export type AttemptResult = "ok" | "ip" | "global";
+
+export async function takeAttempt(env: Env, ip: string, opts: { global?: boolean; kind?: "login" | "challenge" } = {}): Promise<AttemptResult> {
+  const kind = opts.kind ?? "login";
   const reset = now() + WINDOW;
   const upsert = `INSERT INTO auth_attempts (key, count, reset_at) VALUES (?, 1, ?)
-    ON CONFLICT (key) DO UPDATE SET count = CASE WHEN reset_at > ? THEN count + 1 ELSE 1 END, reset_at = CASE WHEN reset_at > ? THEN reset_at ELSE excluded.reset_at END`;
-  await env.DB.batch([
-    env.DB.prepare(upsert).bind(`ip:${ip}`, reset, now(), now()),
-    env.DB.prepare(upsert).bind("global", reset, now(), now()),
-  ]);
+    ON CONFLICT (key) DO UPDATE SET count = CASE WHEN reset_at > ? THEN count + 1 ELSE 1 END, reset_at = CASE WHEN reset_at > ? THEN reset_at ELSE excluded.reset_at END
+    RETURNING count`;
+  const key = `${kind === "login" ? "ip" : kind}:${ipKey(ip)}`;
+  const stmts = [env.DB.prepare(upsert).bind(key, reset, now(), now())];
+  if (opts.global) stmts.push(env.DB.prepare(upsert).bind("global", reset, now(), now()));
+  const res = await env.DB.batch<{ count: number }>(stmts);
+  const ipCount = res[0].results[0]?.count ?? 0;
+  if (ipCount > (kind === "challenge" ? LIMITS.challenge : LIMITS.ip)) return "ip";
+  if (opts.global && (res[1].results[0]?.count ?? 0) > LIMITS.global) return "global";
+  return "ok";
 }
 
-export async function clearFailures(env: Env, ip: string): Promise<void> {
-  await env.DB.prepare("DELETE FROM auth_attempts WHERE key = ? OR reset_at <= ?").bind(`ip:${ip}`, now()).run();
+// 登录成功：清掉这个 IP 的计数；计入了全局计数的，把这一次减掉（全局只统计失败）
+export async function clearFailures(env: Env, ip: string, opts: { global?: boolean } = {}): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM auth_attempts WHERE key = ? OR reset_at <= ?").bind(`ip:${ipKey(ip)}`, now()),
+    ...(opts.global ? [env.DB.prepare("UPDATE auth_attempts SET count = MAX(0, count - 1) WHERE key = 'global'")] : []),
+  ]);
 }
 
 // ---------- 通行密钥（WebAuthn） ----------

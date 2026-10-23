@@ -592,7 +592,7 @@ export async function renderAddressesPage(el) {
               .map(
                 (a) => `<div class="addr-row ${a.blocked ? "blocked" : ""}" role="row" data-addr="${esc(a.address)}">
                 <span class="addr-color" style="--lc:${esc(a.color || "transparent")}"></span>
-                <div class="addr-main"><b>${esc(a.address)}</b><span class="muted small">${a.note ? esc(a.note) + " · " : ""}${a.total} 封${a.unread ? ` · ${a.unread} 未读` : ""}${a.spam_count ? ` · ${a.spam_count} 垃圾` : ""} · 最近 ${fmtRelative(a.last_at)}</span></div>
+                <div class="addr-main"><b>${esc(a.address)}</b><span class="muted small">${a.note ? `<span class="u">${esc(a.note)}</span> · ` : ""}${a.total} 封${a.unread ? ` · ${a.unread} 未读` : ""}${a.spam_count ? ` · ${a.spam_count} 垃圾` : ""} · 最近 ${fmtRelative(a.last_at)}</span></div>
                 ${a.blocked ? `<span class="status err">已停用</span>` : a.muted ? `<span class="status off">${icon("bellOff")}静音</span>` : ""}
                 <a class="btn sm ghost" href="#/box/${encodeURIComponent(a.address)}">查看</a>
                 <button class="icon-btn sm" data-edit aria-label="编辑">${icon("more")}</button>

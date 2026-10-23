@@ -9,14 +9,14 @@ export const ftsText = (s: string | null | undefined) => (s ?? "").replace(CJK, 
 
 const BODY_LIMIT = 20000;
 
-export async function indexMessage(
-  env: Env,
-  rowid: number,
-  m: { subject: string; people: string; body: string },
-): Promise<void> {
-  await env.DB.prepare("INSERT OR REPLACE INTO messages_fts (rowid, subject, people, body) VALUES (?, ?, ?, ?)")
-    .bind(rowid, ftsText(m.subject), ftsText(m.people), ftsText(m.body.slice(0, BODY_LIMIT)))
-    .run();
+// 返回语句，由调用方和其他写入合并成一个 batch（免费版每次调用最多 50 次 D1 查询）
+export function ftsStatement(env: Env, rowid: number, m: { subject: string; people: string; body: string }): D1PreparedStatement {
+  return env.DB.prepare("INSERT OR REPLACE INTO messages_fts (rowid, subject, people, body) VALUES (?, ?, ?, ?)").bind(
+    rowid,
+    ftsText(m.subject),
+    ftsText(m.people),
+    ftsText(m.body.slice(0, BODY_LIMIT)),
+  );
 }
 
 export function peopleText(...parts: (string | null | undefined)[]): string {

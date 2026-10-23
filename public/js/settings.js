@@ -56,6 +56,7 @@ const TABS = [
   ["members", "团队成员", "users", true],
   ["account", "账户与安全", "key", true],
   ["data", "数据", "database"],
+  ["system", "系统状态", "stethoscope", true],
   ["shortcuts", "快捷键", "keyboard"],
 ];
 
@@ -74,7 +75,7 @@ export async function renderSettingsPage(el, tab) {
     </div>
   </div>`;
   const body = el.querySelector(".tab-body");
-  const render = { general, identities, templates, labels, rules, spam, sending, delivery, members, account, data, shortcuts }[tab];
+  const render = { general, identities, templates, labels, rules, spam, sending, delivery, members, account, data, system, shortcuts }[tab];
   // 没有缓存时先给一个骨架，避免空白
   body.innerHTML = `<section class="set-card"><div class="set-row"><div><i class="sk w40"></i><i class="sk w70"></i></div></div><div class="set-row"><div><i class="sk w70"></i><i class="sk w90"></i></div></div></section>`;
   rerender = () => body.isConnected && render(body).catch(() => {});
@@ -93,9 +94,17 @@ function bindSeg(body, handlers) {
     g.addEventListener("click", async (e) => {
       const b = e.target.closest("button");
       if (!b) return;
-      g.querySelectorAll("button").forEach((x) => (x.classList.toggle("on", x === b), x.setAttribute("aria-checked", String(x === b))));
-      await handlers[g.dataset.seg]?.(b.dataset.v);
-      toast("已保存", { type: "success", duration: 1200 });
+      const prev = g.querySelector("button.on");
+      const select = (btn) => g.querySelectorAll("button").forEach((x) => (x.classList.toggle("on", x === btn), x.setAttribute("aria-checked", String(x === btn))));
+      select(b);
+      // 保存失败时恢复原来的选项，不提示"已保存"
+      try {
+        await handlers[g.dataset.seg]?.(b.dataset.v);
+        toast("已保存", { type: "success", duration: 1200 });
+      } catch (err) {
+        select(prev);
+        toastError(err);
+      }
     }),
   );
 }
@@ -149,7 +158,7 @@ async function general(body) {
     quoteLang: (v) => prefs.set("quoteLang", v),
     replyMode: (v) => prefs.set("replyMode", v),
     images: async (v) => {
-      await api("/settings", { method: "PUT", body: { remoteImages: v } }).catch(toastError);
+      await api("/settings", { method: "PUT", body: { remoteImages: v } });
       store.settings.remoteImages = v;
     },
   });
@@ -171,7 +180,7 @@ async function general(body) {
   body.querySelectorAll("[data-untrust]").forEach(
     (b) =>
       (b.onclick = async () => {
-        await api("/settings", { method: "PUT", body: { untrustSender: b.dataset.untrust } }).catch(toastError);
+        if (!(await api("/settings", { method: "PUT", body: { untrustSender: b.dataset.untrust } }).then(() => true, (err) => (toastError(err), false)))) return;
         store.settings.trustedSenders = store.settings.trustedSenders.filter((x) => x !== b.dataset.untrust);
         general(body);
       }),
@@ -262,7 +271,7 @@ async function templates(body) {
           ? `<div class="id-list">${list
               .map(
                 (t) => `<div class="id-row"><span class="id-ic">${icon("template")}</span>
-              <div class="id-main"><b>${esc(t.name)}</b><span class="muted small">${esc(t.subject || "（不设置主题）")} · 更新于 ${fmtRelative(t.updated_at)}</span></div>
+              <div class="id-main"><b class="u">${esc(t.name)}</b><span class="muted small">${esc(t.subject || "（不设置主题）")} · 更新于 ${fmtRelative(t.updated_at)}</span></div>
               <button class="btn sm ghost" data-edit="${esc(t.id)}">编辑</button>
               <button class="icon-btn sm" data-del="${esc(t.id)}" aria-label="删除">${icon("trash")}</button></div>`,
               )
@@ -320,7 +329,7 @@ async function labels(body) {
           ? `<div class="id-list">${store.labels
               .map(
                 (l) => `<div class="id-row"><span class="label-dot lg" style="--lc:${esc(l.color)}"></span>
-              <div class="id-main"><b>${esc(l.name)}</b><span class="muted small">${counts.get(l.id) ?? 0} 个会话</span></div>
+              <div class="id-main"><b class="u">${esc(l.name)}</b><span class="muted small">${counts.get(l.id) ?? 0} 个会话</span></div>
               <a class="btn sm ghost" href="#/label/${encodeURIComponent(l.id)}">查看</a>
               <button class="btn sm ghost" data-rename="${esc(l.id)}">重命名</button>
               ${isAdmin() ? `<button class="icon-btn sm" data-del="${esc(l.id)}" aria-label="删除">${icon("trash")}</button>` : ""}</div>`,
@@ -395,7 +404,7 @@ async function rules(body) {
           ? `<div class="id-list">${list
               .map(
                 (r) => `<div class="id-row ${r.enabled ? "" : "disabled"}"><span class="id-ic">${icon("workflow")}</span>
-              <div class="id-main"><b>${esc(r.name)}</b><span class="muted small">${esc(desc(r))}</span><span class="muted small i18n">已触发 ${r.hits} 次</span></div>
+              <div class="id-main"><b class="u">${esc(r.name)}</b><span class="muted small">${esc(desc(r))}</span><span class="muted small i18n">已触发 ${r.hits} 次</span></div>
               ${switchHtml(`data-toggle="${esc(r.id)}"`, r.enabled)}
               <button class="btn sm ghost" data-edit="${esc(r.id)}">编辑</button>
               <button class="icon-btn sm" data-del="${esc(r.id)}" aria-label="删除">${icon("trash")}</button></div>`,
@@ -441,7 +450,7 @@ function ruleModal(r, done) {
       <label class="chk"><input type="checkbox" data-a="spam" ${a.spam ? "checked" : ""}/>移到垃圾邮件</label>
     </div>
     <label class="field-label">添加标签</label>
-    <div class="pill-list">${store.labels.map((l) => `<label class="pill pick"><input type="checkbox" data-label="${esc(l.id)}" ${(a.labels ?? []).includes(l.id) ? "checked" : ""}/><span class="label-dot" style="--lc:${esc(l.color)}"></span>${esc(l.name)}</label>`).join("") || `<span class="muted small">还没有标签，可以先在「标签」中创建</span>`}</div>
+    <div class="pill-list">${store.labels.map((l) => `<label class="pill pick"><input type="checkbox" data-label="${esc(l.id)}" ${(a.labels ?? []).includes(l.id) ? "checked" : ""}/><span class="label-dot" style="--lc:${esc(l.color)}"></span><span class="u">${esc(l.name)}</span></label>`).join("") || `<span class="muted small">还没有标签，可以先在「标签」中创建</span>`}</div>
     <label class="field-label">转发到（可选）</label>
     <input class="input" data-forward value="${esc(a.forward ?? "")}" placeholder="必须是 Cloudflare Email Routing 中已验证的目标地址" />
   </div>`);
@@ -534,12 +543,21 @@ async function spam(body) {
       }
     </section>`;
   body.querySelector("[data-save-score]").onclick = async () => {
-    await api("/settings", { method: "PUT", body: { spamScore: body.querySelector("[data-score]").value } }).catch(toastError);
-    toast("已保存", { type: "success" });
+    try {
+      await api("/settings", { method: "PUT", body: { spamScore: body.querySelector("[data-score]").value } });
+      toast("已保存", { type: "success" });
+    } catch (err) {
+      toastError(err);
+    }
   };
   body.querySelector("[data-ai]").onchange = async (e) => {
-    await api("/settings", { method: "PUT", body: { aiSpam: e.target.checked } }).catch(toastError);
-    toast(e.target.checked ? "已开启 AI 判定" : "已关闭 AI 判定", { type: "success" });
+    try {
+      await api("/settings", { method: "PUT", body: { aiSpam: e.target.checked } });
+      toast(e.target.checked ? "已开启 AI 判定" : "已关闭 AI 判定", { type: "success" });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      toastError(err);
+    }
   };
   body.querySelector("[data-add]").onclick = async () => {
     try {
@@ -722,7 +740,7 @@ async function members(body) {
           ? `<div class="id-list">${list
               .map(
                 (m) => `<div class="id-row ${m.disabled ? "disabled" : ""}"><span class="id-ic">${icon("user")}</span>
-              <div class="id-main"><b>${esc(m.name ? `${m.name} · ${m.email}` : m.email)}</b><span class="muted small">可访问：${esc(scopeText(m.scope))} · ${m.last_login_at ? "最近登录 " + fmtRelative(m.last_login_at) : "尚未登录"}${m.disabled ? " · 已停用" : ""}</span></div>
+              <div class="id-main"><b class="u">${esc(m.name ? `${m.name} · ${m.email}` : m.email)}</b><span class="muted small">可访问：${esc(scopeText(m.scope))} · ${m.last_login_at ? "最近登录 " + fmtRelative(m.last_login_at) : "尚未登录"}${m.disabled ? " · 已停用" : ""}</span></div>
               ${m.disabled ? "" : `<button class="btn sm ghost" data-invite="${esc(m.id)}">${icon("mail")}发送登录链接</button>`}
               <button class="btn sm ghost" data-edit="${esc(m.id)}">编辑</button>
               <button class="icon-btn sm" data-del="${esc(m.id)}" aria-label="删除">${icon("trash")}</button></div>`,
@@ -854,7 +872,9 @@ async function data(body) {
       <div class="form-inline"><select class="mini-select" data-scope><option value="">全部域名</option>${stats.map((s) => `<option value="${esc(s.domain)}">${esc(s.domain)}</option>`).join("")}</select>
         <button class="btn primary" data-export>${icon("download")}准备导出</button></div>
       <div class="export-parts"></div>
-    </section>`;
+    </section>
+    ${isAdmin() ? importCard() : ""}`;
+  if (isAdmin()) bindImport(body);
   body.querySelector("[data-export]").onclick = async () => {
     const domain = body.querySelector("[data-scope]").value;
     const q = domain ? `domain=${encodeURIComponent(domain)}` : "";
@@ -864,6 +884,140 @@ async function data(body) {
       ? `<div class="set-sub"><b>${info.total} 封邮件，共 ${info.pages} 个文件</b><div class="pill-list">${Array.from({ length: info.pages }, (_, i) => `<a class="pill link" href="/api/export.mbox?${q}&page=${i}" download>${icon("download")}第 ${i * info.pageSize + 1}–${Math.min(info.total, (i + 1) * info.pageSize)} 封</a>`).join("")}</div></div>`
       : `<div class="set-empty muted">没有可导出的邮件。</div>`;
   };
+}
+
+// 导入：mbox（Gmail 导出、Thunderbird、Apple Mail）或 .eml 文件
+function importCard() {
+  const boxes = (store.stats?.mailboxes ?? []).map((m) => m.mailbox);
+  return `<section class="set-card import-card">
+    <div class="set-row"><div><b>导入邮件</b><span>支持 mbox（Gmail「Google 数据导出」、Thunderbird、Apple Mail 导出的文件）和 .eml。发件人是你自己域名的邮件放进「已发送」，其他的放进收件地址的收件箱；重复的会自动跳过。</span></div></div>
+    <div class="set-sub">
+      <div class="form-inline wrap">
+        <input type="file" class="input" data-import-files accept=".mbox,.mbx,.eml,application/mbox,message/rfc822" multiple aria-label="选择要导入的文件" />
+        <select class="mini-select" data-import-box aria-label="导入到">
+          <option value="">按收件地址自动归类</option>
+          ${boxes.map((b) => `<option value="${esc(b)}">导入到 ${esc(b)}</option>`).join("")}
+        </select>
+        <label class="check-inline"><input type="checkbox" data-import-read checked /> 标为已读</label>
+        <button class="btn primary" data-import-start>${icon("upload")}开始导入</button>
+        <button class="btn ghost" data-import-stop hidden>停止</button>
+      </div>
+      <div class="import-progress muted small" aria-live="polite"></div>
+      <p class="muted small">每封邮件约占 25 行 D1 写入：免费套餐每天大约能导入 3,000 封。超出后会自动暂停，第二天重新导入同一个文件即可，已导入的会跳过。</p>
+    </div>
+  </section>`;
+}
+
+function bindImport(body) {
+  let ctrl = null;
+  const $p = body.querySelector(".import-progress");
+  const start = body.querySelector("[data-import-start]");
+  const stop = body.querySelector("[data-import-stop]");
+  start.onclick = async () => {
+    const files = [...(body.querySelector("[data-import-files]").files ?? [])];
+    if (!files.length) return toast("请先选择要导入的文件", { type: "error" });
+    const { importFiles } = await import("./importer.js");
+    ctrl = new AbortController();
+    start.disabled = true;
+    stop.hidden = false;
+    const show = (st) => {
+      const parts = [`已处理 ${st.done} 封`, `导入 ${st.stored}`, st.duplicate ? `重复跳过 ${st.duplicate}` : "", st.skipped ? `无法导入 ${st.skipped}` : "", st.failed ? `失败 ${st.failed}` : ""].filter(Boolean);
+      $p.innerHTML = `${st.finished ? "" : icon("loader", "spin")} ${esc(parts.join(" · "))}${st.lastError ? `<br><span class="err-text">${esc(st.stopped ? `已暂停：${st.stopped}` : `最近一次问题：${st.lastError}`)}</span>` : ""}`;
+    };
+    try {
+      const st = await importFiles(files, {
+        mailbox: body.querySelector("[data-import-box]").value,
+        markRead: body.querySelector("[data-import-read]").checked,
+        signal: ctrl.signal,
+        onProgress: show,
+      });
+      if (!ctrl.signal.aborted) toast(st.stopped ? "导入已暂停" : `导入完成：新增 ${st.stored} 封`, { type: st.stopped ? "error" : "success" });
+      emit("mail:changed");
+    } catch (e) {
+      if (!ctrl.signal.aborted) toastError(e);
+    } finally {
+      start.disabled = false;
+      stop.hidden = true;
+    }
+  };
+  stop.onclick = () => {
+    ctrl?.abort();
+    toast("已停止导入");
+  };
+}
+
+// ---------- 系统状态 ----------
+const EVENT_TEXT = {
+  inbound_error: "收信出错",
+  inbound_timeout: "邮件过大，没能解析完成",
+  scheduled_failed: "定时邮件发送失败",
+};
+
+async function system(body) {
+  const st = await api("/system/status");
+  const u = st.usage;
+  const bar = (used, cap, label) => {
+    const pct = Math.min(100, (used / cap) * 100);
+    return `<div class="usage-row"><span>${label}</span><div class="bar ${pct > 80 ? "warn" : ""}"><i style="width:${Math.max(1, pct)}%"></i></div>
+      <span class="muted small">${used.toLocaleString()} / ${cap.toLocaleString()}（${pct.toFixed(pct < 1 ? 1 : 0)}%）</span></div>`;
+  };
+  const errs = u && !u.error ? Object.entries(u.scriptErrors) : [];
+  const ERR_NAME = { exceededResources: "超出 CPU / 内存限制", scriptThrewException: "程序出错", internalError: "Cloudflare 内部错误" };
+  body.innerHTML = `
+    <section class="set-card">
+      <div class="set-row"><div><b>版本</b><span>当前 ${esc(st.version.version)}${st.version.latest ? ` · 最新 ${esc(st.version.latest)}` : ""}。<a href="${esc(st.version.changelog)}" target="_blank" rel="noopener">更新说明</a></span></div>
+        <span class="status ${st.version.updateAvailable ? "warn" : "ok"}">${st.version.updateAvailable ? "有新版本" : "已是最新"}</span></div>
+      ${
+        st.version.updateAvailable
+          ? `<div class="set-sub muted small">一键部署的：打开你 GitHub 上的这个仓库 → <b>Actions</b> → <b>Update from upstream</b> → <b>Run workflow</b>，Cloudflare 会自动重新部署。命令行部署的：<code>git pull</code> 后运行 <code>npm run update</code>。</div>`
+          : ""
+      }
+    </section>
+    <section class="set-card">
+      <div class="set-row"><div><b>今日用量</b><span>整个 Cloudflare 账户今天（UTC）的用量，对照免费套餐的每日额度。超出后 D1 会拒绝查询，收信也会失败，到 UTC 0 点恢复。</span></div>
+        <button class="btn ghost sm" data-fresh>${icon("refresh")}刷新</button></div>
+      ${
+        u?.error
+          ? `<div class="set-sub"><div class="notice info sm">${icon("info")}<span>${esc(u.error)}</span></div></div>`
+          : `<div class="usage">
+              ${bar(u.d1RowsRead, st.limits.d1RowsRead, "D1 读取行数")}
+              ${bar(u.d1RowsWritten, st.limits.d1RowsWritten, "D1 写入行数")}
+              ${bar(u.workersRequests, st.limits.workersRequests, "Workers 请求数")}
+            </div>
+            <div class="set-sub muted small"><span>本应用今天处理了 ${u.scriptRequests.toLocaleString()} 次请求。</span>${errs.map(([k, n]) => ` <span class="status warn">${esc(ERR_NAME[k] ?? k)}：${n} 次</span>`).join("")}</div>`
+      }
+    </section>
+    ${
+      st.storage.mismatch
+        ? `<section class="set-card"><div class="notice err">${icon("alert")}<span>存储方式和第一次部署时不一致（当时是 ${esc(st.storage.recorded)}，现在是 ${esc(st.storage.mode)}）。两种存储之间不会自动迁移，已有邮件的正文和附件可能无法读取。请改回原来的部署方式重新部署。</span></div></section>`
+        : ""
+    }
+    <section class="set-card">
+      <div class="set-row"><div><b>收信与发送异常</b><span>邮件不会因此丢失：收信出错的邮件原文已经保存，可以在邮件的「更多」菜单里下载。最近 30 天的记录。</span></div>
+        ${st.events.length ? `<button class="btn ghost sm" data-clear-events>清空记录</button>` : ""}</div>
+      ${st.pending ? `<div class="set-sub muted small">${st.pending} 封邮件正在处理中。</div>` : ""}
+      ${
+        st.events.length
+          ? `<div class="id-list">${st.events
+              .map((e) => {
+                const d = e.detail || {};
+                const who = [d.from, d.to].filter(Boolean).join(" → ");
+                return `<div class="id-row"><span class="id-ic">${icon(e.kind === "scheduled_failed" ? "send" : "alert")}</span>
+                  <div class="id-main"><b>${esc(EVENT_TEXT[e.kind] ?? e.kind)}${d.subject ? ` · <span class="u">${esc(d.subject)}</span>` : ""}</b>
+                  <span class="muted small">${fmtRelative(e.created_at)}${who ? ` · ${esc(who)}` : ""}${d.error ? ` · ${esc(d.error)}` : ""}</span></div></div>`;
+              })
+              .join("")}</div>`
+          : `<div class="set-empty muted">没有异常记录。</div>`
+      }
+    </section>`;
+  body.querySelector("[data-fresh]")?.addEventListener("click", async () => {
+    const fresh = await api("/system/status?fresh=1").catch(toastError);
+    if (fresh) system(body);
+  });
+  body.querySelector("[data-clear-events]")?.addEventListener("click", async () => {
+    await api("/system/events/clear", { body: {} }).catch(toastError);
+    system(body);
+  });
 }
 
 // ---------- 账户与安全 ----------

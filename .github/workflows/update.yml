@@ -1,0 +1,29 @@
+# 更新到最新版本：打开仓库的 Actions → Update from upstream → Run workflow。
+# 推送后 Cloudflare 会自动重新部署，部署脚本会先更新数据库结构，收发不中断。
+# 想每周自动更新：仓库 Settings → Secrets and variables → Actions → Variables，新建变量 AUTO_UPDATE，值为 true
+name: Update from upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    # 只在你自己的仓库里运行；定时运行需要 AUTO_UPDATE = true
+    if: github.repository != 'cleantempmail/cleantempmail-workspace' && (github.event_name == 'workflow_dispatch' || vars.AUTO_UPDATE == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update to the latest version
+        run: |
+          # 总是用最新的更新脚本（旧仓库里可能还没有这个文件）
+          curl -fsSL https://raw.githubusercontent.com/cleantempmail/cleantempmail-workspace/main/scripts/update-from-upstream.mjs -o "$RUNNER_TEMP/update.mjs"
+          node "$RUNNER_TEMP/update.mjs"
+          git push

@@ -8,3 +8,4 @@ wrangler.local.jsonc
 .wrangler.deploy.json
 
 .wrangler.*.jsonc
+.wrangler.test.json

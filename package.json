@@ -1,13 +1,15 @@
 {
   "name": "cleantempmail-workspace",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Self-hosted multi-domain mailbox on Cloudflare Workers (Email Routing + Email Sending / Resend)",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "node scripts/deploy.mjs",
     "update": "node scripts/deploy.mjs",
     "db:local": "wrangler d1 migrations apply DB --local",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node tests/run.mjs",
+    "test:lite": "STORAGE=lite node tests/run.mjs"
   },
   "license": "MIT",
   "type": "module",
