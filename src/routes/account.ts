@@ -1,6 +1,6 @@
 // 管理员账户与安全：密码、通行密钥、Cloudflare API 令牌
 import { Hono } from "hono";
-import { checkApiToken, oauthConfigured, requireAdmin } from "../auth";
+import { apiTokenCf, checkApiToken, missingPermissions, oauthConfigured, requireAdmin } from "../auth";
 import type { AppEnv } from "../env";
 import { hashPassword, newChallenge, passwordProblem, verifyPassword, verifyRegistration } from "../local-auth";
 import { encrypt, getSetting, getSettings, now, setSetting } from "../util";
@@ -17,13 +17,14 @@ const rpOf = (url: string) => {
 account.get("/account", async (c) => {
   const s = c.get("session");
   const [st, { results }] = await Promise.all([
-    getSettings(c.env, ["admin_password", "cf_api_token", "owner_email"]),
+    getSettings(c.env, ["admin_password", "cf_api_token", "owner_email", "cf_token_missing"]),
     c.env.DB.prepare("SELECT id, name, created_at, last_used_at FROM passkeys WHERE user_id = ? ORDER BY created_at").bind(s.userId).all(),
   ]);
   return c.json({
     hasPassword: Boolean(st.admin_password),
     passkeys: results,
     cfToken: Boolean(st.cf_api_token),
+    cfTokenMissing: st.cf_api_token && st.cf_token_missing ? (JSON.parse(st.cf_token_missing) as string[]) : [],
     oauthConfigured: oauthConfigured(c.env),
     email: st.owner_email ?? s.email,
   });
@@ -84,7 +85,19 @@ account.put("/account/cf-token", async (c) => {
   const current = await getSetting(c.env, "account_id");
   if (current && current !== checked.accountId) return c.json({ error: "这个令牌属于另一个 Cloudflare 账户" }, 400);
   await setSetting(c.env, "cf_api_token", await encrypt(c.env, t));
+  await setSetting(c.env, "cf_token_missing", JSON.stringify(checked.missing));
   return c.json({ ok: true, warnings: checked.warnings });
+});
+
+// 在 Cloudflare 里给令牌补上权限后，重新检查一次
+account.post("/account/cf-token/check", async (c) => {
+  const cf = await apiTokenCf(c.env);
+  if (!cf) return c.json({ error: "还没有设置 API 令牌" }, 400);
+  const accountId = await getSetting(c.env, "account_id");
+  const zones = await cf.get<{ id: string }[]>(`/zones?${accountId ? `account.id=${accountId}&` : ""}per_page=1`).catch(() => null);
+  const missing = zones ? await missingPermissions(cf, zones[0]?.id) : ["Zone · Read"];
+  await setSetting(c.env, "cf_token_missing", JSON.stringify(missing));
+  return c.json({ ok: true, missing });
 });
 
 account.delete("/account/cf-token", async (c) => {

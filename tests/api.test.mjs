@@ -290,6 +290,27 @@ describe("添加域名", () => {
   });
 });
 
+describe("API 令牌权限", () => {
+  const setPerm = (rules) => fetch(`${MOCK}/cf/__perm`, { method: "POST", body: JSON.stringify({ rules }) });
+
+  test("保存令牌时检查出缺少的权限，配置域名失败时说明缺哪项，补好后重新检查", async () => {
+    await setPerm(false);
+    const r = await c.api("/account/cf-token", { method: "PUT", body: { token: "tok-missing-rules-0123456789" } });
+    assert.ok(r.warnings.some((w) => w.includes("Email Routing Rules · Edit")), JSON.stringify(r.warnings));
+    assert.deepEqual((await c.api("/account")).cfTokenMissing, ["Email Routing Rules · Edit"]);
+    assert.ok((await c.api("/system/alerts")).alerts.some((a) => a.key.startsWith("perm:")), "打开应用时会提醒");
+
+    const p = await c.api("/domains", { body: { zoneId: "z-perm" } });
+    assert.equal(p.ok, false);
+    assert.match(p.steps.at(-1).detail, /缺少「Email Routing Rules · Edit」权限/);
+
+    await setPerm(true);
+    assert.deepEqual((await c.api("/account/cf-token/check", { body: {} })).missing, []);
+    assert.deepEqual((await c.api("/account")).cfTokenMissing, []);
+    assert.equal((await c.api("/domains", { body: { zoneId: "z-perm" } })).ok, true, "补好权限后添加成功");
+  });
+});
+
 describe("系统状态", () => {
   test("状态和提醒接口可用", async () => {
     const st = await c.api("/system/status");

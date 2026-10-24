@@ -1,5 +1,5 @@
 // 一键配置域名：开启 Email Routing → catch-all 投递到本 Worker → 开通发件
-import { Cf } from "./cf";
+import { Cf, isPermissionError } from "./cf";
 import type { Env } from "./env";
 import { resendApi, resendDomains, resendFindOrCreateDomain, resendKey, resendRecordFqdn, type Provider, type ResendDomain } from "./providers";
 import { getSetting, now, setSetting, workerName } from "./util";
@@ -19,6 +19,12 @@ export interface ProvisionResult {
 }
 
 const isCfRoutingMx = (content: string) => /(^|\.)mx\.cloudflare\.net\.?$/i.test(content);
+
+// 权限不足时说清楚缺哪项、怎么补（API 令牌在 Cloudflare 里编辑权限后，令牌本身不变）
+function errText(e: any, perm: string): string {
+  if (!isPermissionError(e)) return e.message;
+  return `${e.message}：缺少「${perm}」权限。在 Cloudflare「我的个人资料 → API 令牌」里编辑这个令牌加上这项权限（令牌不变，不用重新粘贴），然后重新添加域名`;
+}
 
 export async function provisionDomain(
   env: Env,
@@ -78,12 +84,12 @@ export async function provisionDomain(
       steps.push({
         step: "开启 Email Routing",
         ok: false,
-        detail: `${err.message}（${deleted.length ? (restored ? "已把删除的 MX 记录恢复回去" : "删除的 MX 记录没能全部恢复，请在 Cloudflare 控制台检查") : "未改动任何 DNS 记录"}）`,
+        detail: `${errText(err, deleted.length < foreign.length ? "DNS · Edit" : "Zone Settings · Edit")}（${deleted.length ? (restored ? "已把删除的 MX 记录恢复回去" : "删除的 MX 记录没能全部恢复，请在 Cloudflare 控制台检查") : "未改动任何 DNS 记录"}）`,
       });
       return { ok: false, domain, steps };
     }
   } else if (err) {
-    steps.push({ step: "开启 Email Routing", ok: false, detail: `${err.message}（未改动任何 DNS 记录）` });
+    steps.push({ step: "开启 Email Routing", ok: false, detail: `${errText(err, "Zone Settings · Edit")}（未改动任何 DNS 记录）` });
     return { ok: false, domain, steps };
   }
   steps.push({ step: "检查 MX 记录", ok: true, detail: foreign.length ? `已删除 ${foreign.length} 条旧 MX 记录（已备份）` : "无冲突" });
@@ -105,7 +111,7 @@ export async function provisionDomain(
     });
     steps.push({ step: "开启 Catch-all", ok: true, detail: `*@${domain} → ${worker}` });
   } catch (e: any) {
-    steps.push({ step: "开启 Catch-all", ok: false, detail: e.message });
+    steps.push({ step: "开启 Catch-all", ok: false, detail: errText(e, "Email Routing Rules · Edit") });
     return { ok: false, domain, steps };
   }
 

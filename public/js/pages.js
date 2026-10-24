@@ -215,6 +215,8 @@ function resetPasswordModal() {
 
 // ---------- 首次设置 ----------
 // 令牌需要的权限（与 OAuth 的权限对应）。键名用于 Cloudflare 的「预填权限」链接
+// key 必须和 Cloudflare 控制台内部的名称完全一致（不认识的 key 会被静默忽略，令牌就少了这项权限）。
+// 已对照控制台的权限列表核对：注意是 email_routing_rule（单数）
 const TOKEN_PERMS = [
   ["user_details", "read", "User Details · Read"],
   ["account_settings", "read", "Account Settings · Read"],
@@ -222,8 +224,9 @@ const TOKEN_PERMS = [
   ["zone", "read", "Zone · Read"],
   ["zone_settings", "edit", "Zone Settings · Edit"],
   ["dns", "edit", "DNS · Edit"],
-  ["email_routing_rules", "edit", "Email Routing Rules · Edit"],
+  ["email_routing_rule", "edit", "Email Routing Rules · Edit"],
   ["email_sending", "edit", "Email Sending · Edit"],
+  ["account_analytics", "read", "Account Analytics · Read (optional)"],
   ["analytics", "read", "Analytics · Read (optional)"],
 ];
 export const tokenTemplateUrl = () =>

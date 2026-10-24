@@ -1068,7 +1068,13 @@ async function account(body) {
     </section>
     <section class="set-card">
       <div class="set-row"><div><b>Cloudflare API 令牌</b><span>用于列出域名、配置收件和发件。只保存在你的数据库里（加密）。权限不够或令牌被撤销时，可以在这里更换。</span></div>
-        <span class="status ${a.cfToken ? "ok" : "off"}">${a.cfToken ? "已连接" : "未设置"}</span></div>
+        <span class="status ${a.cfToken ? (a.cfTokenMissing?.length ? "warn" : "ok") : "off"}">${a.cfToken ? (a.cfTokenMissing?.length ? "缺少权限" : "已连接") : "未设置"}</span></div>
+      ${
+        a.cfTokenMissing?.length
+          ? `<div class="set-sub"><div class="notice warn sm">${icon("alert")}<span>令牌缺少这些权限：${esc(a.cfTokenMissing.join("、"))}。添加域名会失败。在 Cloudflare「我的个人资料 → API 令牌」里编辑这个令牌补上即可，令牌本身不变，不用重新粘贴。</span></div>
+             <div class="form-inline tight" style="margin-top:8px"><button class="btn sm" data-recheck>${icon("refresh")}补好了，重新检查</button></div></div>`
+          : ""
+      }
       <form class="set-sub token-form" novalidate>
         <input class="input" type="password" name="token" autocomplete="off" spellcheck="false" placeholder="粘贴新的 API 令牌" aria-label="API 令牌" />
         <div class="form-inline"><button class="btn primary" type="submit">${a.cfToken ? "更换令牌" : "保存令牌"}</button>
@@ -1115,6 +1121,12 @@ async function account(body) {
         refresh();
       }),
   );
+  body.querySelector("[data-recheck]")?.addEventListener("click", async () => {
+    const r = await api("/account/cf-token/check", { body: {} }).catch(toastError);
+    if (!r) return;
+    toast(r.missing.length ? `还缺少：${r.missing.join("、")}` : "权限已经齐了", { type: r.missing.length ? "error" : "success" });
+    refresh();
+  });
   const tf = body.querySelector(".token-form");
   tf.onsubmit = async (e) => {
     e.preventDefault();

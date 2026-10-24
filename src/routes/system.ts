@@ -1,6 +1,7 @@
 // 系统：导入邮件、系统状态（收信异常、当日用量、存储方式检查）、版本检查
 import { Hono } from "hono";
 import { ownerCf, requireAdmin } from "../auth";
+import { cfApiBase } from "../cf";
 import type { AppEnv, Env } from "../env";
 import { ingest, parseHeaderBlock } from "../mail";
 import { storageMode } from "../storage";
@@ -101,7 +102,7 @@ async function fetchUsage(env: Env): Promise<Usage | { error: string }> {
   const owner = await ownerCf(env).catch(() => null);
   if (!accountId || !owner) return { error: "需要先在「账户与安全」里配置 Cloudflare API 令牌" };
   const date = new Date().toISOString().slice(0, 10);
-  const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+  const res = await fetch(`${cfApiBase()}/graphql`, {
     method: "POST",
     headers: { Authorization: `Bearer ${owner.cf.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -193,6 +194,8 @@ system.get("/system/alerts", async (c) => {
   if (nErr) alerts.push({ key: `errors:${Math.max(...errs.map((r) => r.last))}`, level: "warn", text: `最近 24 小时程序出错 ${nErr} 次` });
   const sched = counts.results.find((r) => r.kind === "scheduled_failed");
   if (sched) alerts.push({ key: `scheduled:${sched.last}`, level: "warn", text: `最近 24 小时有 ${sched.n} 封定时邮件发送失败` });
+  const missing = JSON.parse((await getSetting(c.env, "cf_api_token")) ? ((await getSetting(c.env, "cf_token_missing")) ?? "[]") : "[]") as string[];
+  if (missing.length) alerts.push({ key: `perm:${missing.join(",")}`, level: "error", text: `Cloudflare API 令牌缺少权限：${missing.join("、")}` });
   if (storage.mismatch) alerts.push({ key: "storage", level: "error", text: "存储方式和之前不一致，已有邮件的正文可能无法读取" });
   if (!("error" in usage)) {
     const pct = Math.max(usage.d1RowsRead / FREE_LIMITS.d1RowsRead, usage.d1RowsWritten / FREE_LIMITS.d1RowsWritten, usage.workersRequests / FREE_LIMITS.workersRequests);

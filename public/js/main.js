@@ -68,7 +68,7 @@ async function checkAlerts() {
     toast(a.text, {
       type: a.level === "error" ? "error" : "info",
       duration: 10000,
-      action: { label: "查看", onClick: () => (location.hash = "#/settings/system") },
+      action: { label: "查看", onClick: () => (location.hash = a.key.startsWith("perm:") ? "#/settings/account" : "#/settings/system") },
     });
   }
 }
