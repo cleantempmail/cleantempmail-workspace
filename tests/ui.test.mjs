@@ -45,8 +45,14 @@ describe("列表与阅读", () => {
     const body = page.locator(".list-body");
     await body.evaluate((el) => (el.scrollTop = 600));
     await page.waitForTimeout(300);
-    const row = page.locator(".row", { hasText: "批量邮件 30" });
-    await row.click();
+    // 点当前可见区域里的一行（同一秒投递的邮件排序不固定，不按主题找）
+    const before = await body.evaluate((el) => el.scrollTop);
+    const idx = await body.evaluate((el) => {
+      const top = el.getBoundingClientRect().top;
+      return [...el.querySelectorAll(".row")].findIndex((r) => r.getBoundingClientRect().top > top + 40);
+    });
+    assert.ok(before > 300 && idx > 0, `列表可以滚动（${before}，${idx}）`);
+    await body.locator(".row").nth(idx).click();
     await page.waitForSelector(".reader-pane .thread-subject");
     const top = await body.evaluate((el) => el.scrollTop);
     assert.ok(top > 300, `滚动位置保留（${top}）`);
