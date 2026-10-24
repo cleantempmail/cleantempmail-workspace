@@ -128,22 +128,37 @@ export function domainOf(address: string): string {
 
 export const isEmail = (s: string) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(s);
 
+// 摘要：去掉营销邮件预览文字里常见的零宽占位字符（&zwnj; 等）
 export function snippetOf(text: string | undefined | null, len = 160): string {
-  return (text ?? "").replace(/\s+/g, " ").trim().slice(0, len);
+  return (text ?? "").replace(/[\u200b-\u200d\u2060\ufeff\u034f\u00ad]/g, "").replace(/\s+/g, " ").trim().slice(0, len);
+}
+
+const ENTITIES: Record<string, string> = {
+  nbsp: " ", ensp: " ", emsp: " ", thinsp: " ", lt: "<", gt: ">", quot: '"', apos: "'", amp: "&",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»", mdash: "—", ndash: "–", hellip: "…",
+  middot: "·", bull: "•", copy: "©", reg: "®", trade: "™", euro: "€", pound: "£", yen: "¥", cent: "¢",
+  deg: "°", times: "×", divide: "÷", shy: "", zwnj: "", zwj: "", lrm: "", rlm: "",
+};
+
+// HTML 实体解码：&#39; &#x27; &rsquo; 等。一次替换完成，&amp;lt; 会正确地变成 &lt;
+export function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z][a-z0-9]*);/gi, (m, e: string) => {
+    if (e[0] === "#") {
+      const cp = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
+    }
+    return ENTITIES[e] ?? ENTITIES[e.toLowerCase()] ?? m;
+  });
 }
 
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|tr|li|h\d)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
+  return decodeEntities(
+    html
+      .replace(/<(style|script|head|title)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|tr|li|h\d)>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  );
 }
 
 // HMAC 签名（图片代理链接用）：与加密密钥同源，但用途前缀不同

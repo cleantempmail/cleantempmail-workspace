@@ -38,6 +38,13 @@ describe("收信", () => {
     assert.equal(att.status, 200);
   });
 
+  test("只有 HTML 的邮件：摘要里的 HTML 实体被解码，零宽占位字符被去掉", async () => {
+    const html = "<html><head><title>PayPal</title><style>p{color:red}</style></head><body><div style='display:none'>&zwnj;&nbsp;&zwnj;</div><p>We&#x27;re making changes &amp; it&rsquo;s &#8220;fine&#8221; &mdash; ok</p></body></html>";
+    await deliver(mail({ to: HR, subject: "实体测试", html }), HR);
+    const row = sql("SELECT snippet FROM messages WHERE subject = '实体测试'")[0];
+    assert.equal(row.snippet, "We're making changes & it’s “fine” — ok");
+  });
+
   test("重复投递只保存一份", async () => {
     const m = mail({ to: HR, subject: "重复投递" });
     await deliver(m, HR);
