@@ -1,6 +1,6 @@
 {
   "name": "cleantempmail-workspace",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Self-hosted multi-domain mailbox on Cloudflare Workers (Email Routing + Email Sending / Resend)",
   "scripts": {
     "dev": "wrangler dev",
