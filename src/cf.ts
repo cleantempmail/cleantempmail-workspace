@@ -4,6 +4,7 @@ let API = "https://api.cloudflare.com/client/v4";
 export function setCfApiBase(url: string | undefined): void {
   if (url) API = url;
 }
+export const cfApiBase = () => API;
 
 export class CfApiError extends Error {
   constructor(
@@ -13,6 +14,10 @@ export class CfApiError extends Error {
     super(errors.map((e) => `${e.message} (${e.code})`).join("; ") || `HTTP ${status}`);
   }
 }
+
+// 权限不足：Authentication error (10000) / 9109，或 HTTP 403
+export const isPermissionError = (e: unknown) =>
+  e instanceof CfApiError && (e.status === 403 || e.errors.some((x) => x.code === 10000 || x.code === 9109));
 
 export class Cf {
   constructor(public readonly token: string) {}

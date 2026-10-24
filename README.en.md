@@ -183,6 +183,7 @@ Limits to know:
 ### Troubleshooting
 
 - **Setup says the token is invalid**: the token needs at least "Account Settings · Read" and "Workers Scripts · Read", and "Account Resources" must be the account this app is deployed in
+- **"Authentication error (10000)" when adding a domain**: the API token is missing a permission, and the message names it (most often "Email Routing Rules · Edit"). Edit the token under "My Profile → API Tokens" in Cloudflare to add it — the token itself stays the same, no need to paste it again — then click "Check again" under **Settings → Account & security** and add the domain again. Before October 24, 2026, the "Create token at Cloudflare" button left this permission out
 - **Forgot the admin password**: click "Forgot password?" on the sign-in page and paste an API token for the same account
 - **redirect_uri mismatch when signing in with OAuth**: the OAuth client's Redirect URL must exactly match your app address, including `https://` and `/auth/callback`
 - **Mail isn't arriving**: click "Health check" on the domain card. It checks Email Routing, MX, catch-all, SPF and DMARC and can fix them in one click

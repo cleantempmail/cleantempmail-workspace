@@ -238,6 +238,7 @@ Cloudflare 开通 R2 时要求绑卡（免费额度内不扣费）。不想绑�
 ### 常见问题
 
 - **首次设置提示令牌无效**：令牌至少需要「Account Settings · Read」「Workers Scripts · Read」权限，并且「账户资源」要选部署了本应用的账户
+- **添加域名时提示 Authentication error (10000)**：API 令牌缺少某项权限，提示里会写明缺哪一项（最常见的是「Email Routing Rules · Edit」）。在 Cloudflare「我的个人资料 → API 令牌」里编辑这个令牌补上权限即可，令牌本身不变，不用重新粘贴；然后在「设置 → 账户与安全」点「重新检查」，再重新添加域名。2026 年 10 月 24 日之前的版本里，「在 Cloudflare 创建令牌」按钮漏选了这项权限
 - **忘记管理员密码**：登录页点「忘记密码？」，粘贴同一个账户的 API 令牌即可重设
 - **使用 OAuth 登录时提示 redirect_uri 不匹配**：OAuth 客户端的 Redirect URL 必须和访问地址完全一致，包括 `https://` 和 `/auth/callback`
 - **收不到邮件**：在域名卡片上点「健康检查」，会逐项检查 Email Routing、MX、Catch-all、SPF、DMARC，并可以一键修复

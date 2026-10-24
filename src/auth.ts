@@ -1,6 +1,6 @@
 import { Hono, type Context, type Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { Cf, CfApiError } from "./cf";
+import { Cf, CfApiError, isPermissionError } from "./cf";
 import type { AppEnv, Env, Session } from "./env";
 import { sendVia, type Provider } from "./providers";
 import { FULL, parseScope } from "./scope";
@@ -185,7 +185,7 @@ auth.post("/setup", async (c) => {
   if (!/^[\w.-]{20,}$/.test(token)) return c.json({ error: "API 令牌格式不对，请粘贴完整的令牌" }, 400);
   const checked = await checkApiToken(c.env, token, true).catch((e: Error) => e);
   if (checked instanceof Error) return c.json({ error: checked.message }, 400);
-  const { ownerId, email, accountId, warnings } = checked;
+  const { ownerId, email, accountId, warnings, missing } = checked;
   await c.env.DB.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('owner_user_id', ?)").bind(ownerId).run();
   if ((await getSetting(c.env, "owner_user_id")) !== ownerId) return c.json({ error: "管理员已经设置过了，请直接登录" }, 409);
   await Promise.all([
@@ -193,6 +193,7 @@ auth.post("/setup", async (c) => {
     setSetting(c.env, "owner_email", email),
     setSetting(c.env, "cf_api_token", await encrypt(c.env, token)),
     setSetting(c.env, "admin_password", await hashPassword(body.password!)),
+    setSetting(c.env, "cf_token_missing", JSON.stringify(missing)),
   ]);
   await createSession(c, ownerId, email, null);
   return c.json({ ok: true, warnings });
@@ -225,7 +226,11 @@ auth.post("/reset", async (c) => {
   const checked = /^[\w.-]{20,}$/.test(token) ? await checkApiToken(c.env, token, true).catch((e: Error) => e) : new Error("API 令牌格式不对，请粘贴完整的令牌");
   if (checked instanceof Error) return c.json({ error: checked.message }, 400);
   if (st.account_id && checked.accountId !== st.account_id) return c.json({ error: "这个令牌属于另一个 Cloudflare 账户" }, 400);
-  await Promise.all([setSetting(c.env, "admin_password", await hashPassword(body.password!)), setSetting(c.env, "cf_api_token", await encrypt(c.env, token))]);
+  await Promise.all([
+    setSetting(c.env, "admin_password", await hashPassword(body.password!)),
+    setSetting(c.env, "cf_api_token", await encrypt(c.env, token)),
+    setSetting(c.env, "cf_token_missing", JSON.stringify(checked.missing)),
+  ]);
   // 旧会话全部失效
   await c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(st.owner_user_id).run();
   await clearFailures(c.env, ip);
@@ -283,10 +288,29 @@ export async function checkApiToken(env: Env, token: string, strict: boolean) {
     );
   }
   const warnings: string[] = [];
-  if (!(await cf.get(`/zones?account.id=${accountId}&per_page=1`).then(() => true, () => false))) warnings.push("令牌没有「区域：读取」权限，添加域名时会失败，请在 Cloudflare 里给令牌补上");
+  const zones = await cf.get<{ id: string }[]>(`/zones?account.id=${accountId}&per_page=1`).catch(() => null);
+  const missing = zones ? await missingPermissions(cf, zones[0]?.id) : ["Zone · Read"];
+  if (missing.length) warnings.push(missingText(missing));
   const ownerId = user?.id ?? `token:${verify?.id ?? (await sha256hex(token)).slice(0, 24)}`;
-  return { ownerId, email: user?.email ?? null, accountId, warnings };
+  return { ownerId, email: user?.email ?? null, accountId, warnings, missing };
 }
+
+// 用只读请求探测令牌缺少哪些权限（模板链接里的权限可能没被选上，或者用户手动创建时漏了）。
+// 只判断"完全没有这项权限"：有编辑权限就一定能读
+export async function missingPermissions(cf: Cf, zoneId: string | undefined): Promise<string[]> {
+  if (!zoneId) return [];
+  const probes: [string, string][] = [
+    [`/zones/${zoneId}/dns_records?per_page=1`, "DNS · Edit"],
+    [`/zones/${zoneId}/email/routing/rules/catch_all`, "Email Routing Rules · Edit"],
+    [`/zones/${zoneId}/email/routing`, "Zone Settings · Edit"],
+  ];
+  const out: string[] = [];
+  await Promise.all(probes.map(([path, perm]) => cf.get(path).catch((e) => isPermissionError(e) && out.push(perm))));
+  return probes.map(([, p]) => p).filter((p) => out.includes(p));
+}
+
+export const missingText = (missing: string[]) =>
+  `令牌缺少这些权限：${missing.join("、")}。在 Cloudflare「我的个人资料 → API 令牌」里编辑这个令牌补上即可（令牌本身不变，不用重新粘贴）`;
 
 // ---------- 团队成员：邮件登录链接 ----------
 
@@ -499,7 +523,7 @@ export async function sessionTokenScope(c: Context<AppEnv>): Promise<string | nu
 }
 
 // 首次设置时保存的 API 令牌（不需要 OAuth）
-async function apiTokenCf(env: Env): Promise<Cf | null> {
+export async function apiTokenCf(env: Env): Promise<Cf | null> {
   const enc = await getSetting(env, "cf_api_token");
   if (!enc) return null;
   try {

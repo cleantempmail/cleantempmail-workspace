@@ -9,14 +9,25 @@ function cloudflare() {
   const zones = {
     "z-mx": { id: "z-mx", name: "mx.test", account: { id: "a1" }, routing: false, dns: [], catchAll: null },
     "z-fail": { id: "z-fail", name: "fail.test", account: { id: "a1" }, routing: false, dns: [], catchAll: null },
+    "z-perm": { id: "z-perm", name: "perm.test", account: { id: "a1" }, routing: false, dns: [], catchAll: null },
   };
-  for (const z of Object.values(zones)) z.dns.push({ id: `r${++seq}`, type: "MX", name: z.name, content: "aspmx.l.google.com", priority: 1 });
+  // 模拟令牌缺少 Email Routing Rules 权限（POST /cf/__perm 切换）
+  const perms = { rules: true };
+  for (const z of [zones["z-mx"], zones["z-fail"]]) z.dns.push({ id: `r${++seq}`, type: "MX", name: z.name, content: "aspmx.l.google.com", priority: 1 });
   const cfMx = (c) => /mx\.cloudflare\.net$/.test(c);
   const ok = (result) => [200, { success: true, errors: [], result }];
   const fail = (status, code, message) => [status, { success: false, errors: [{ code, message }] }];
+  const denied = () => fail(403, 10000, "Authentication error");
   return {
     zones,
+    perms,
     handle(method, path, url, body) {
+      if (path === "/user") return ok({ id: "u1", email: "owner@example.com" });
+      if (path === "/user/tokens/verify") return ok({ id: "t1", status: "active" });
+      if (path === "/accounts") return [200, { success: true, errors: [], result: [{ id: "a1", name: "Test" }], result_info: { total_pages: 1 } }];
+      if (path === "/accounts/a1/workers/scripts") return ok([{ id: "cf-mailbox" }]);
+      if (path === "/graphql") return [200, { data: null, errors: [{ message: "not available in mock" }] }];
+      if (path === "/zones" && method === "GET") return ok(Object.values(zones).map((z) => ({ id: z.id, name: z.name, status: "active", account: z.account })));
       const m = path.match(/^\/zones\/([^/]+)(\/.*)?$/);
       const z = m && zones[m[1]];
       if (!z) return fail(404, 1001, "zone not found");
@@ -46,6 +57,7 @@ function cloudflare() {
         return ok({ enabled: true });
       }
       if (rest === "/email/routing/rules/catch_all") {
+        if (!perms.rules) return denied();
         if (method === "PUT") z.catchAll = body;
         return ok(z.catchAll ?? { actions: [{ type: "drop" }], matchers: [{ type: "all" }], enabled: false });
       }
@@ -66,6 +78,7 @@ export async function startMockResend() {
     };
     const url = new URL(req.url, "http://x");
     if (url.pathname === "/cf/__state") return json(200, cf.zones);
+    if (url.pathname === "/cf/__perm") return (Object.assign(cf.perms, JSON.parse(body || "{}")), json(200, cf.perms));
     if (url.pathname.startsWith("/cf/")) {
       const [status, data] = cf.handle(req.method, url.pathname.slice(3), url, body ? JSON.parse(body) : undefined);
       return json(status, data);

@@ -1,7 +1,7 @@
 // 工作台功能：地址管理、屏蔽名单、规则、标签、团队成员、推送、AI、导出、存储、投递状态
 import { Hono } from "hono";
 import { cfClient, requireAdmin, sendSystemMail, sessionTokenScope, workerAccountId } from "../auth";
-import type { Cf } from "../cf";
+import { cfApiBase, type Cf } from "../cf";
 import type { AppEnv, Env } from "../env";
 import { AI_MODEL } from "../filters";
 import type { StoredBody } from "../mail";
@@ -383,7 +383,7 @@ export async function refreshDelivery(env: Env, cf: Cf, ids?: string[]): Promise
     for (const part of chunk(rows, 50)) {
       const variants = part.flatMap((r) => [r.provider_id, r.provider_id.replace(/^<|>$/g, ""), `<${r.provider_id.replace(/^<|>$/g, "")}>`]);
       const since = new Date((Math.min(...part.map((r) => r.created_at)) - 300) * 1000).toISOString();
-      const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      const res = await fetch(`${cfApiBase()}/graphql`, {
         method: "POST",
         headers: { Authorization: `Bearer ${cf.token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
