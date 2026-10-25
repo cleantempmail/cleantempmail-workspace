@@ -45,6 +45,17 @@ describe("收信", () => {
     assert.equal(row.snippet, "We're making changes & it’s “fine” — ok");
   });
 
+  test("悬停预取（peek=1）不会把邮件标为已读，正式打开才标", async () => {
+    await deliver(mail({ to: HR, subject: "预取测试" }), HR);
+    const t = await findThread("预取测试");
+    const isRead = () => sql(`SELECT is_read FROM messages WHERE thread_id = '${t.thread_id}'`)[0].is_read;
+    const peek = await c.api(`/threads/${t.thread_id}?peek=1`);
+    assert.equal(peek.messages[0].is_read, 0);
+    assert.equal(isRead(), 0);
+    await c.api(`/threads/${t.thread_id}`);
+    assert.equal(isRead(), 1);
+  });
+
   test("重复投递只保存一份", async () => {
     const m = mail({ to: HR, subject: "重复投递" });
     await deliver(m, HR);
@@ -207,6 +218,7 @@ describe("安全", () => {
     const csp = r.headers.get("content-security-policy");
     assert.match(csp, /img-src data: http:\/\/127\.0\.0\.1:\d+\/api\/img /);
     assert.doesNotMatch(csp, /img-src[^;]*'self'/);
+    assert.match(r.headers.get("cache-control"), /private, max-age=\d+/, "正文可以缓存（预取和再次打开不用重新请求）");
   });
 
   test("登录链接：打开只显示确认页，不会直接登录", async () => {

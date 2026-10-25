@@ -6,27 +6,63 @@ import { icon } from "./icons.js";
 import { labelEditor, snoozeMenu, threadAction } from "./list.js";
 import { emit, isAdmin, navigate, store } from "./store.js";
 import { confirmDialog, menu, toast, toastError } from "./ui.js";
-import { $, addrText, avatar, displayName, esc, fileKind, fmtFull, fmtRelative, fmtSize, fmtWhen, h, parseList, renderPlainText } from "./util.js";
+import { $, addrText, avatar, displayName, esc, fileKind, fmtFull, fmtRelative, fmtSize, fmtWhen, h, lang, parseList, renderPlainText } from "./util.js";
 
 const pane = () => $(".reader-pane");
 let loadSeq = 0;
 
+// ---- 预取：鼠标悬停 / 按下 / 触摸列表行时提前取会话和正文，点开时基本不用等 ----
+// 会话用 peek=1 取（不会标为已读），正文 HTML 进浏览器缓存，iframe 打开时直接命中
+const prefetched = new Map();
+const htmlUrl = (id, images) => `/api/messages/${encodeURIComponent(id)}/html?images=${images}`;
+
+export function prefetchThread(t) {
+  if (!t || t.isDraft || prefetched.has(t.thread_id)) return;
+  const trash = store.route.view === "trash" ? "1" : "0";
+  const promise = api(`/threads/${encodeURIComponent(t.thread_id)}?trash=${trash}&peek=1`);
+  promise.catch(() => prefetched.delete(t.thread_id));
+  prefetched.set(t.thread_id, { at: Date.now(), promise });
+  // 最后一封的正文（打开时默认展开的就是它）
+  if (t.id) fetch(htmlUrl(t.id, trusted({ from_addr: t.from_addr }) ? 1 : 0), { credentials: "same-origin" }).catch(() => {});
+  // 只保留最近的几个
+  if (prefetched.size > 12) prefetched.delete(prefetched.keys().next().value);
+}
+
+// 对会话做了操作（归档、标星等）后，之前预取的数据就过期了
+export function forgetPrefetched(tids) {
+  for (const t of tids) prefetched.delete(t);
+}
+
+function takePrefetched(tid) {
+  const p = prefetched.get(tid);
+  prefetched.delete(tid);
+  return p && Date.now() - p.at < 20000 ? p.promise : null;
+}
+
 export async function loadThread(tid) {
   const seq = ++loadSeq;
+  const early = takePrefetched(tid);
   store.thread = { threadId: tid, loading: true, messages: [] };
   renderReader();
   try {
     const trash = store.route.view === "trash" ? "1" : "0";
-    const data = await api(`/threads/${encodeURIComponent(tid)}?trash=${trash}`);
+    const data = (early && (await early.catch(() => null))) || (await api(`/threads/${encodeURIComponent(tid)}?trash=${trash}`));
     if (seq !== loadSeq) return;
     store.thread = data;
     const row = store.list.threads.find((t) => t.thread_id === tid);
+    // 预取的数据没有标已读：这里补标
+    if (early && data.messages.some((m) => m.folder === "inbox" && !m.is_read)) {
+      api("/threads/action", { body: { threadIds: [tid], action: "read" } }).then(() => emit("stats:refresh"), () => {});
+    }
     if (row?.unread) {
       row.unread = 0;
       $(`.row[data-tid="${CSS.escape(tid)}"]`)?.classList.remove("unread");
-      setTimeout(() => emit("stats:refresh"), 300);
+      if (!early) setTimeout(() => emit("stats:refresh"), 300);
     }
     renderReader();
+    // 顺便预取列表里的下一封（j / 下一封 时不用等）
+    const i = store.list.threads.findIndex((t) => t.thread_id === tid);
+    if (i >= 0) prefetchThread(store.list.threads[i + 1]);
   } catch (e) {
     if (seq !== loadSeq) return;
     store.thread = { threadId: tid, error: e.message, messages: [] };
@@ -130,9 +166,9 @@ function messageCard(m, expanded) {
     </div>
     ${expanded && bad ? `<div class="msg-warn">${icon("shieldAlert")}<span>发件人身份验证失败：这封邮件可能是冒充 <b>${esc(m.from_addr.split("@")[1])}</b> 的钓鱼邮件，请不要点击链接或提供密码。</span></div>` : ""}
     ${expanded && m.parse_error ? `<div class="msg-warn soft">${icon("info")}<span>这封邮件的格式不标准，只能显示部分内容。可以在「更多」里下载原始邮件查看。</span></div>` : ""}
+    <div class="msg-ai" hidden></div>
     <div class="msg-body">${expanded ? bodyHtml(m) : ""}</div>
     ${expanded && atts.length ? attachmentsHtml(m, atts) : ""}
-    <div class="msg-ai" hidden></div>
   </article>`;
 }
 
@@ -380,8 +416,7 @@ function bindReader(el, moreActs = []) {
         { label: "回复", icon: "reply", hint: "r", onClick: () => openComposer(replyPrefill(m, "reply"), { mount: replySlot() }) },
         { label: "全部回复", icon: "replyAll", hint: "a", onClick: () => openComposer(replyPrefill(m, "replyAll"), { mount: replySlot() }) },
         { label: "转发", icon: "forward", hint: "f", onClick: () => openComposer(replyPrefill(m, "forward"), { mount: replySlot() }) },
-        store.me.ai ? { label: "翻译成中文", icon: "languages", onClick: () => translate(card, m, "zh") } : null,
-        store.me.ai ? { label: "翻译成英文", icon: "languages", onClick: () => translate(card, m, "en") } : null,
+        store.me.ai ? { label: lang() === "en" ? "翻译成英文" : "翻译成中文", icon: "languages", onClick: () => translate(card, m) } : null,
         "-",
         inbox ? { label: m.is_read ? "从这里标为未读" : "标为已读", icon: "mail", onClick: () => messageAction(m, m.is_read ? "unread" : "read") } : null,
         inbox ? { label: "下载原始邮件 (.eml)", icon: "code", onClick: () => (location.href = `/api/messages/${m.id}/raw`) } : null,
@@ -448,9 +483,26 @@ function hydrateBody(card, m) {
       requestAnimationFrame(() => (fitting = false));
     }
   };
+  // 正文 HTML 一解析完就调整高度并显示，不等里面的图片全部加载完（营销邮件图片多，经隐私代理第一次加载可能要一两秒）
+  const watch = () => {
+    const prev = frame.contentDocument;
+    let tries = 0;
+    const tick = () => {
+      const doc = frame.contentDocument;
+      if (doc && doc !== prev && doc.URL !== "about:blank" && doc.body && doc.readyState !== "loading") return setup(doc);
+      if (++tries < 400) setTimeout(tick, 25);
+    };
+    tick();
+  };
   frame.addEventListener("load", () => {
     const doc = frame.contentDocument;
     if (!doc) return;
+    setup(doc);
+    fit();
+  });
+  const setup = (doc) => {
+    if (doc.__cfmReady) return;
+    doc.__cfmReady = true;
     fit();
     new ResizeObserver(fit).observe(doc.body);
     doc.querySelectorAll("img").forEach((img) => img.addEventListener("load", fit));
@@ -481,11 +533,13 @@ function hydrateBody(card, m) {
       banner.querySelector("[data-show-img]").onclick = () => {
         frame.src = frame.src.replace("images=0", "images=1");
         banner.hidden = true;
+        watch();
       };
       banner.querySelector("[data-trust]").onclick = async () => {
         await trustSender(m.from_addr);
         frame.src = frame.src.replace("images=0", "images=1");
         banner.hidden = true;
+        watch();
       };
     } else if (trackers || links) {
       const parts = [trackers ? `已拦截 ${trackers} 个追踪像素` : "", links ? `清理了 ${links} 个跟踪链接` : ""].filter(Boolean);
@@ -494,7 +548,8 @@ function hydrateBody(card, m) {
       banner.title = "图片经隐私代理加载，发件人无法得知你何时打开邮件、你的 IP、位置和设备；链接里的跟踪参数已移除";
       banner.innerHTML = `${icon("shieldCheck")}<span>${parts.join(" · ")}</span>`;
     } else banner.hidden = true;
-  });
+  };
+  watch();
 }
 
 async function trustSender(addr) {
@@ -568,7 +623,7 @@ async function aiSummary(el, btn) {
   box.innerHTML = `<div class="ai-head">${icon("sparkles")}AI 摘要</div><div class="ai-body muted i18n">${icon("loader", "spin")} 正在总结…</div>`;
   btn.disabled = true;
   try {
-    const { summary } = await api("/ai/summarize", { body: { threadId: store.thread.threadId } });
+    const { summary } = await api("/ai/summarize", { body: { threadId: store.thread.threadId, lang: lang() } });
     box.innerHTML = `<div class="ai-head">${icon("sparkles")}AI 摘要<button class="icon-btn xs" data-close aria-label="关闭窗口">${icon("x")}</button></div><div class="ai-body">${summary ? mdLite(summary) : '<span class="i18n">（没有生成内容）</span>'}</div><div class="ai-foot">由 Workers AI 生成，可能不准确</div>`;
     box.querySelector("[data-close]").onclick = () => (box.hidden = true);
   } catch (e) {
@@ -578,16 +633,34 @@ async function aiSummary(el, btn) {
   }
 }
 
-async function translate(card, m, lang) {
+// 翻译成界面语言：译文直接显示在正文的位置（顶部有提示，可以随时切回原文）
+async function translate(card, m) {
+  const to = lang() === "en" ? "en" : "zh";
+  const name = to === "en" ? "英文" : "中文";
   const box = card.querySelector(".msg-ai");
+  if (card.classList.contains("collapsed")) expand(card);
   box.hidden = false;
-  box.innerHTML = `<div class="ai-head">${icon("languages")}翻译</div><div class="ai-body muted i18n">${icon("loader", "spin")} 正在翻译…</div>`;
+  box.classList.add("tr");
+  const show = (translated) => {
+    card.classList.toggle("translated", translated);
+    box.innerHTML = `<div class="tr-bar">${icon("languages")}<span>${translated ? `已由 AI 翻译成${name}` : "正在显示原文"}</span>
+        <button class="link-btn" data-tr-toggle>${translated ? "显示原文" : "显示译文"}</button></div>
+      ${translated ? `<div class="text-body tr-text">${m.__translation ? esc(m.__translation) : '<span class="muted i18n">（没有生成内容）</span>'}</div><div class="ai-foot">由 Workers AI 生成，可能不准确</div>` : ""}`;
+    box.querySelector("[data-tr-toggle]").onclick = () => show(!translated);
+  };
+  if (m.__translation !== undefined && m.__translationTo === to) return show(true);
+  card.classList.add("translated");
+  box.innerHTML = `<div class="tr-bar">${icon("loader", "spin")}<span>正在翻译成${name}…</span></div>`;
+  box.scrollIntoView({ block: "nearest", behavior: "smooth" });
   try {
-    const { translation } = await api("/ai/translate", { body: { messageId: m.id, lang } });
-    box.innerHTML = `<div class="ai-head">${icon("languages")}${lang === "zh" ? "中文译文" : "English"}<button class="icon-btn xs" data-close aria-label="关闭窗口">${icon("x")}</button></div><div class="ai-body text-body">${translation ? esc(translation) : '<span class="i18n">（没有生成内容）</span>'}</div>`;
-    box.querySelector("[data-close]").onclick = () => (box.hidden = true);
+    const { translation } = await api("/ai/translate", { body: { messageId: m.id, lang: to } });
+    m.__translation = translation || "";
+    m.__translationTo = to;
+    show(true);
   } catch (e) {
-    box.innerHTML = `<div class="ai-body err">${esc(e.message)}</div>`;
+    card.classList.remove("translated");
+    box.innerHTML = `<div class="tr-bar err">${icon("alert")}<span>${esc(e.message)}</span><button class="link-btn" data-tr-close>关闭</button></div>`;
+    box.querySelector("[data-tr-close]").onclick = () => (box.hidden = true);
   }
 }
 

@@ -226,21 +226,29 @@ async function bodyText(env: Env, id: string): Promise<string> {
 
 org.post("/ai/summarize", async (c) => {
   const s = c.get("session");
-  const { threadId } = await c.req.json<{ threadId: string }>();
+  // 摘要用界面语言输出（英文界面用英文总结，不管原邮件是什么语言）
+  const { threadId, lang } = await c.req.json<{ threadId: string; lang?: string }>();
+  const en = lang === "en";
   const ms = messageScopeSql(s.scope);
   const { results } = await c.env.DB.prepare(
     `SELECT id, from_name, from_addr, folder, subject, created_at FROM messages WHERE thread_id = ? AND deleted_at IS NULL AND ${ms.sql} ORDER BY created_at DESC LIMIT 12`,
   ).bind(threadId, ...ms.args).all<any>();
   if (!results.length) return c.json({ error: "会话不存在" }, 404);
+  const bodies = await getMany(c.env, results.map((m: any) => `msg/${m.id}/body.json`));
   let corpus = "";
   for (const m of results.reverse()) {
-    const t = (await bodyText(c.env, m.id)).replace(/\n>.*$/gm, "").slice(0, 2500);
-    corpus += `\n---\n发件人：${m.folder === "sent" ? "我" : m.from_name || m.from_addr}\n时间：${new Date(m.created_at * 1000).toISOString().slice(0, 16)}\n${t}`;
+    const obj = bodies.get(`msg/${m.id}/body.json`);
+    const t = ((obj ? (await obj.json<StoredBody>()).text : "") ?? "").replace(/\n>.*$/gm, "").slice(0, 2500);
+    const who = m.folder === "sent" ? (en ? "Me" : "我") : m.from_name || m.from_addr;
+    const when = new Date(m.created_at * 1000).toISOString().slice(0, 16);
+    corpus += en ? `\n---\nFrom: ${who}\nDate: ${when}\n${t}` : `\n---\n发件人：${who}\n时间：${when}\n${t}`;
   }
   const summary = await aiText(
     c.env,
-    "你是邮件助理。用简体中文总结下面的邮件会话：先用一句话说明主题，然后用 3-6 个要点列出关键信息、结论和需要我处理的待办（如果有）。不要编造内容。",
-    `主题：${results[results.length - 1].subject}\n${corpus.slice(-12000)}`,
+    en
+      ? "You are an email assistant. Summarize the email conversation below in English, whatever language it is written in: start with one sentence stating the topic, then 3-6 bullet points with the key information, conclusions and any to-dos for me. Do not make anything up."
+      : "你是邮件助理。用简体中文总结下面的邮件会话（不管原文是什么语言）：先用一句话说明主题，然后用 3-6 个要点列出关键信息、结论和需要我处理的待办（如果有）。不要编造内容。",
+    `${en ? "Subject" : "主题"}：${results[results.length - 1].subject}\n${corpus.slice(-12000)}`,
   );
   return c.json({ summary });
 });
