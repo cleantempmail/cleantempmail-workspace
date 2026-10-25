@@ -534,9 +534,15 @@ export async function purgeMessages(env: Env, ids: string[]): Promise<void> {
       touched.push(r);
     }
     if (results.length) {
+      // 整个会话都删光了的，会话汇总在同一个事务里一起删掉：之后刷新汇总时即使 D1 临时出错，也不会留下"幽灵会话"
+      const tids = [...new Set(results.map((r) => r.thread_id))];
+      const orphan = (table: string) =>
+        env.DB.prepare(`DELETE FROM ${table} WHERE thread_id IN (${placeholders(tids.length)}) AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = ${table}.thread_id)`).bind(...tids);
       await env.DB.batch([
         env.DB.prepare(`DELETE FROM messages_fts WHERE rowid IN (${placeholders(results.length)})`).bind(...results.map((r) => r.rid)),
         env.DB.prepare(`DELETE FROM messages WHERE id IN (${placeholders(results.length)})`).bind(...results.map((r) => r.id)),
+        orphan("thread_labels"),
+        orphan("threads"),
       ]);
     }
   }

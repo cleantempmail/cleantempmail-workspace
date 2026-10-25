@@ -136,6 +136,20 @@ describe("整理操作", () => {
     assert.equal(left[0].spam, 0);
   });
 
+  test("幽灵会话（汇总还在、邮件已删）：打开时自动修好，每天的任务也会清理", async () => {
+    const ghost = (id) => sql(`INSERT INTO threads (thread_id, sort_at, last_at, subject, n_trash, trash_at) VALUES ('${id}', strftime('%s','now'), strftime('%s','now'), 'ghost', 1, strftime('%s','now'))`);
+    ghost("ghost-open");
+    assert.ok((await threads("view=trash")).some((t) => t.thread_id === "ghost-open"), "列表里出现了幽灵会话");
+    const r = await c.req("/api/threads/ghost-open?trash=1");
+    assert.equal(r.status, 404);
+    await sleep(500);
+    assert.ok(!(await threads("view=trash")).some((t) => t.thread_id === "ghost-open"), "打开一次后就不再显示");
+    ghost("ghost-daily");
+    await cron("17 3 * * *");
+    await sleep(1500);
+    assert.equal(sql("SELECT COUNT(*) AS n FROM threads WHERE thread_id = 'ghost-daily'")[0].n, 0);
+  });
+
   test("过期的废纸篓邮件由每分钟的清理任务删除（文件一并删除）", async () => {
     await deliver(mail({ to: HR, subject: "过期测试", attachments: [{ name: "x.bin", data: Buffer.alloc(100, 1) }] }), HR);
     const t = await findThread("过期测试");
