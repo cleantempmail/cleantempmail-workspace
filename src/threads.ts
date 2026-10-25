@@ -39,27 +39,39 @@ const verified = (m: MsgMeta) => {
   }
 };
 
+// D1 偶尔会返回临时的内部错误（D1_ERROR: internal error），重试一次
+async function retry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 200));
+    return fn();
+  }
+}
+
 export async function refreshThreads(env: Env, threadIds: string[]): Promise<void> {
   const ids = [...new Set(threadIds.filter(Boolean))];
-  for (const part of chunk(ids, 80)) {
-    const { results } = await env.DB.prepare(
-      `SELECT ${META_COLS} FROM messages WHERE thread_id IN (${placeholders(part.length)}) ORDER BY created_at, rowid`,
-    ).bind(...part).all<MsgMeta>();
-    const byThread = new Map<string, MsgMeta[]>();
-    for (const m of results) {
-      const list = byThread.get(m.thread_id) ?? [];
-      list.push(m);
-      byThread.set(m.thread_id, list);
-    }
-    const stmts: D1PreparedStatement[] = [];
-    const gone = part.filter((t) => !byThread.has(t));
-    if (gone.length) {
-      stmts.push(env.DB.prepare(`DELETE FROM threads WHERE thread_id IN (${placeholders(gone.length)})`).bind(...gone));
-      stmts.push(env.DB.prepare(`DELETE FROM thread_labels WHERE thread_id IN (${placeholders(gone.length)})`).bind(...gone));
-    }
-    for (const [tid, msgs] of byThread) stmts.push(upsertThread(env, tid, msgs));
-    if (stmts.length) await env.DB.batch(stmts);
+  for (const part of chunk(ids, 80)) await retry(() => refreshPart(env, part));
+}
+
+async function refreshPart(env: Env, part: string[]): Promise<void> {
+  const { results } = await env.DB.prepare(
+    `SELECT ${META_COLS} FROM messages WHERE thread_id IN (${placeholders(part.length)}) ORDER BY created_at, rowid`,
+  ).bind(...part).all<MsgMeta>();
+  const byThread = new Map<string, MsgMeta[]>();
+  for (const m of results) {
+    const list = byThread.get(m.thread_id) ?? [];
+    list.push(m);
+    byThread.set(m.thread_id, list);
   }
+  const stmts: D1PreparedStatement[] = [];
+  const gone = part.filter((t) => !byThread.has(t));
+  if (gone.length) {
+    stmts.push(env.DB.prepare(`DELETE FROM threads WHERE thread_id IN (${placeholders(gone.length)})`).bind(...gone));
+    stmts.push(env.DB.prepare(`DELETE FROM thread_labels WHERE thread_id IN (${placeholders(gone.length)})`).bind(...gone));
+  }
+  for (const [tid, msgs] of byThread) stmts.push(upsertThread(env, tid, msgs));
+  if (stmts.length) await env.DB.batch(stmts);
 }
 
 function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStatement {
@@ -127,6 +139,9 @@ function upsertThread(env: Env, tid: string, msgs: MsgMeta[]): D1PreparedStateme
 export async function reconcileStats(env: Env): Promise<void> {
   const visible = "folder = 'inbox' AND spam = 0 AND archived = 0 AND COALESCE(parse_error, '') != 'pending'";
   await env.DB.batch([
+    // 没有任何邮件的会话汇总（中途出错留下的"幽灵会话"）
+    env.DB.prepare("DELETE FROM thread_labels WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = thread_labels.thread_id)"),
+    env.DB.prepare("DELETE FROM threads WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = threads.thread_id)"),
     env.DB.prepare("DELETE FROM mailbox_stats"),
     env.DB.prepare(
       `INSERT INTO mailbox_stats (mailbox, domain, total, unread, spam, last_at)

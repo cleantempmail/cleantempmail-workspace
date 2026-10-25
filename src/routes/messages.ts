@@ -7,7 +7,7 @@ import { sendVia, type Provider } from "../providers";
 import { messageInScope, messageScopeSql, threadScopeSql } from "../scope";
 import { protectHtml } from "../privacy";
 import { parseSearch } from "../search";
-import { backfillPending, backfillStep, touch } from "../threads";
+import { backfillPending, backfillStep, refreshThreads, touch } from "../threads";
 import { chunk, domainOf, getSetting, now, placeholders, randomId } from "../util";
 import { blobs, getMany } from "../storage";
 
@@ -200,7 +200,11 @@ messages.get("/threads/:tid", async (c) => {
     c.env.DB.prepare("SELECT snooze_until FROM threads WHERE thread_id = ?").bind(tid),
   ]);
   const desc = msgRes.results as any[];
-  if (!desc.length) return c.json({ error: "会话不存在或已删除" }, 404);
+  if (!desc.length) {
+    // 列表里有、打开却没有邮件：会话汇总过期了（例如删除时 D1 临时出错），顺手修好，刷新后就不再显示
+    c.executionCtx.waitUntil(refreshThreads(c.env, [tid]).catch(() => {}));
+    return c.json({ error: "会话不存在或已删除" }, 404);
+  }
   const results = desc.reverse();
   // 正文一次批量读取（免绑卡模式下逐封读取，长会话会超过每次 50 次 D1 查询的上限）
   const objs = await getMany(c.env, results.map((m) => `msg/${m.id}/body.json`));
