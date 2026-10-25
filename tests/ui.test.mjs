@@ -29,6 +29,10 @@ before(async () => {
   // 足够多的邮件，用来测试列表滚动
   for (let i = 0; i < 45; i++) await deliver(mail({ to: HR, subject: `批量邮件 ${String(i).padStart(2, "0")}`, from: `user${i}@bulk.test` }), HR, `user${i}@bulk.test`);
   await deliver(mail({ to: HR, subject: "长会话", html: "<p>第一封 <b>HTML</b> 邮件</p>" }), HR);
+  // 很长、带远程图片的 HTML 邮件：用来测试图片还没加载完时正文已经完整显示
+  const paras = Array.from({ length: 40 }, (_, i) => `<p>第 ${i + 1} 段营销内容</p>`).join("");
+  await deliver(mail({ to: HR, subject: "图片很多的邮件", html: `<img src="https://images.example.com/banner.png" width="600" height="200">${paras}` }), HR);
+  await deliver(mail({ to: HR, subject: "预取后打开" }), HR);
   // 品牌头像：通过 DMARC 验证的显示，验证失败（冒充）的不显示
   await deliver(mail({ to: HR, subject: "GitHub 通知", from: "noreply@github.com", headers: { "Authentication-Results": "mx.cloudflare.net; dkim=pass header.d=github.com; dmarc=pass header.from=github.com; spf=pass" } }), HR, "noreply@github.com");
   await deliver(mail({ to: HR, subject: "冒充的通知", from: "service@paypal.com", headers: { "Authentication-Results": "mx.cloudflare.net; dkim=none; dmarc=none header.from=paypal.com; spf=fail" } }), HR, "service@paypal.com");
@@ -68,6 +72,56 @@ describe("列表与阅读", () => {
     await page.waitForSelector(".reader-toolbar .star-btn.on");
     assert.equal(await page.evaluate(() => document.querySelector(".reader-pane iframe")?.dataset.mark), "same");
     await page.context().close();
+  });
+
+  test("图片还没加载完时，正文已经按完整高度显示", async () => {
+    const page = await open();
+    // 让图片代理非常慢
+    await page.route("**/api/img**", (route) => setTimeout(() => route.abort().catch(() => {}), 8000));
+    await page.locator(".row", { hasText: "图片很多的邮件" }).click();
+    await page.waitForSelector(".reader-pane iframe");
+    await page.waitForTimeout(1500);
+    const h = await page.evaluate(() => document.querySelector(".reader-pane iframe").getBoundingClientRect().height);
+    assert.ok(h > 600, `正文高度 ${h}px（不应停在初始的 120px）`);
+    await page.context().close();
+  });
+
+  test("悬停预取后打开：内容正确，邮件被标为已读", async () => {
+    const page = await open();
+    const row = page.locator(".row", { hasText: "预取后打开" });
+    const peek = page.waitForRequest((r) => r.url().includes("peek=1"));
+    await row.hover();
+    await peek;
+    await page.waitForTimeout(200);
+    await row.click();
+    await page.waitForSelector(".reader-pane .thread-subject", { hasText: "预取后打开" });
+    await page.waitForTimeout(800);
+    assert.equal(sql("SELECT is_read FROM messages WHERE subject = '预取后打开'")[0].is_read, 1);
+    await page.context().close();
+  });
+
+  test("翻译：只有一个选项（界面语言），译文显示在正文位置，可以切回原文", async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN" });
+    const page = await ctx.newPage();
+    // 测试环境没有 Workers AI：模拟 AI 可用和翻译结果
+    await page.route("**/api/me", async (route) => {
+      const res = await route.fetch();
+      route.fulfill({ response: res, json: { ...(await res.json()), ai: true } });
+    });
+    await page.route("**/api/ai/translate", (route) => route.fulfill({ json: { translation: "这是模拟的中文译文" } }));
+    await page.goto(BASE + "/auth/login");
+    await page.waitForSelector(".row:not(.skeleton)");
+    await page.locator(".row", { hasText: "长会话" }).click();
+    await page.waitForSelector(".reader-pane .msg.expanded [data-more]");
+    await page.click(".reader-pane .msg.expanded [data-more]");
+    assert.equal(await page.locator(".menu-item", { hasText: "翻译成" }).count(), 1, "只有一个翻译选项");
+    await page.click(".menu-item:has-text('翻译成中文')");
+    await page.waitForSelector(".msg.translated .tr-text", { hasText: "这是模拟的中文译文" });
+    assert.ok(await page.locator(".msg.translated .tr-bar", { hasText: "已由 AI 翻译成中文" }).isVisible());
+    assert.equal(await page.locator(".msg.translated .msg-body").isVisible(), false, "原文暂时隐藏");
+    await page.click("[data-tr-toggle]");
+    assert.ok(await page.locator(".msg.expanded .msg-body").isVisible(), "切回原文");
+    await ctx.close();
   });
 
   test("品牌头像只给通过验证的发件人", async () => {

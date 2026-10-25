@@ -206,6 +206,12 @@ messages.get("/threads/:tid", async (c) => {
     return c.json({ error: "会话不存在或已删除" }, 404);
   }
   const results = desc.reverse();
+  // 标为已读和读取正文同时进行（少等一次数据库往返）；peek=1 是悬停预取，不标已读
+  const unreadIds = results.filter((m) => m.folder === "inbox" && !m.is_read).map((m) => m.id);
+  const markRead =
+    unreadIds.length && c.req.query("peek") !== "1"
+      ? c.env.DB.prepare(`UPDATE messages SET is_read = 1 WHERE id IN (${placeholders(unreadIds.length)})`).bind(...unreadIds).run()
+      : null;
   // 正文一次批量读取（免绑卡模式下逐封读取，长会话会超过每次 50 次 D1 查询的上限）
   const objs = await getMany(c.env, results.map((m) => `msg/${m.id}/body.json`));
   const withBodies = await Promise.all(
@@ -231,11 +237,10 @@ messages.get("/threads/:tid", async (c) => {
       };
     }),
   );
-  const unreadIds = results.filter((m) => m.folder === "inbox" && !m.is_read).map((m) => m.id);
   const labels = labelRes as D1Result<{ label_id: string }>;
   const thread = (threadRes.results[0] ?? null) as { snooze_until: number | null } | null;
-  if (unreadIds.length) {
-    await c.env.DB.prepare(`UPDATE messages SET is_read = 1 WHERE id IN (${placeholders(unreadIds.length)})`).bind(...unreadIds).run();
+  if (markRead) {
+    await markRead;
     c.executionCtx.waitUntil(touch(c.env, { threads: [tid] }));
   }
   return c.json({ threadId: tid, messages: withBodies, labels: labels.results.map((l) => l.label_id), snooze_until: thread?.snooze_until ?? null });
@@ -479,7 +484,8 @@ messages.get("/messages/:id/html", async (c) => {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "X-DNS-Prefetch-Control": "off",
-    "Cache-Control": "private, no-store",
+    // 同一封邮件的正文不会变：浏览器缓存一小时，悬停预取和再次打开都不用重新请求
+    "Cache-Control": "private, max-age=3600",
   });
 });
 

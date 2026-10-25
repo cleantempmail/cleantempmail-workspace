@@ -1342,3 +1342,13 @@ html[lang="zh-CN"] :is(h1, h2, h3, .thread-subject, .list-title, .page-head h1) 
 .import-progress { margin-top: 10px; min-height: 18px; }
 .import-progress .spin { vertical-align: -2px; }
 .err-text { color: var(--err); }
+
+/* 翻译：译文显示在正文的位置 */
+.msg-ai.tr { padding: 10px 14px 12px; }
+.tr-bar { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--accent-text, var(--accent)); font-weight: 500; }
+.tr-bar .link-btn { margin-left: auto; font-weight: 500; }
+.tr-bar.err { color: var(--err); }
+.tr-text { margin-top: 10px; white-space: pre-wrap; }
+.msg.translated .msg-body { display: none; }
+.msg-ai.tr:not(:has(.tr-text)) { margin-bottom: 10px; }
+.msg.collapsed .msg-ai { display: none; }

@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { emptyArt, inboxZero } from "./art.js";
 import { openComposer } from "./compose.js";
+import { forgetPrefetched, prefetchThread } from "./reader.js";
 import { icon } from "./icons.js";
 import { emit, navigate, store, viewTitle } from "./store.js";
 import { confirmDialog, labelMenu, menu, modal, pickDateTime, toast, toastError } from "./ui.js";
@@ -293,6 +294,19 @@ function bindList(el) {
 
   const body = el.querySelector(".list-body");
   body.addEventListener("click", (e) => onRowClick(e));
+  // 预取：鼠标停留 80ms 或按下 / 触摸时提前取会话和正文，点开时基本不用等
+  let hoverTimer;
+  const rowThread = (e) => {
+    const r = e.target.closest?.(".row");
+    if (!r || r.classList.contains("draft") || r.classList.contains("skeleton") || r.dataset.tid === store.route.thread) return null;
+    return L.threads.find((t) => t.thread_id === r.dataset.tid);
+  };
+  body.addEventListener("pointerover", (e) => {
+    clearTimeout(hoverTimer);
+    const t = e.pointerType === "mouse" && rowThread(e);
+    if (t) hoverTimer = setTimeout(() => prefetchThread(t), 80);
+  });
+  body.addEventListener("pointerdown", (e) => prefetchThread(rowThread(e)), { passive: true });
   body.addEventListener("keydown", onListKey);
   body.addEventListener(
     "scroll",
@@ -606,6 +620,7 @@ export async function threadAction(tids, action, { silent = false, until, labelI
   if (action === "delete" && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话将被永久删除，无法恢复。`, confirmLabel: "永久删除", danger: true }))) return;
   if (action === "spam_delete" && !(await confirmDialog({ title: "永久删除？", message: `${tids.length} 个会话中的垃圾邮件将被永久删除，无法恢复。会话里的正常邮件不受影响。`, confirmLabel: "永久删除", danger: true }))) return;
 
+  forgetPrefetched(tids);
   const removed = removesFromView(action, view);
   const before = L.threads;
   if (removed) L.threads = L.threads.filter((t) => !tids.includes(t.thread_id));
