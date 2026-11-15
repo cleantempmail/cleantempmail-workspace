@@ -1,5 +1,11 @@
 # 更新记录
 
+## 1.1.5（2026-11-14）
+
+### AI 换模型
+- 原来的模型 Qwen3-30B-A3B 将在 2026 年 11 月 20 日被 Cloudflare 下线，之后 AI 摘要、翻译、起草回复和垃圾邮件判定都会失败。现在 Workers Paid 账户改用 DeepSeek V4.1 Flash
+- DeepSeek V4.1 Flash 不对 Workers Free 开放：免费账户会自动改用 Gemma 4 26B，不需要任何设置。之后升级到 Workers Paid 的，一小时内自动切回 DeepSeek
+
 ## 1.1.4（2026-10-25）
 
 ### 打开邮件更快

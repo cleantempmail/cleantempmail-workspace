@@ -1,4 +1,5 @@
 // 收信过滤：发件人验证结果、屏蔽名单、规则、可选的 AI 垃圾邮件判定
+import { runChat } from "./ai";
 import type { Env } from "./env";
 import { domainOf, getSetting, now } from "./util";
 
@@ -116,23 +117,21 @@ export async function bumpRuleHits(env: Env, ids: string[]): Promise<void> {
 
 // ---------- AI 垃圾邮件判定（可选，默认关闭） ----------
 
-export const AI_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
-
 export async function aiIsSpam(env: Env, m: { from: string; subject: string; text: string }): Promise<boolean> {
   if (!env.AI || (await getSetting(env, "pref_ai_spam")) !== "1") return false;
   try {
-    const res: any = await env.AI.run(AI_MODEL as any, {
-      messages: [
+    const res: any = await runChat(
+      env,
+      [
         {
           role: "system",
           content:
-            "/no_think You are an email spam classifier. Reply with exactly one word: SPAM or HAM. Phishing, scams, unsolicited bulk advertising and malware are SPAM. Newsletters the user likely subscribed to, receipts, notifications and personal mail are HAM.",
+            "You are an email spam classifier. Reply with exactly one word: SPAM or HAM. Phishing, scams, unsolicited bulk advertising and malware are SPAM. Newsletters the user likely subscribed to, receipts, notifications and personal mail are HAM.",
         },
         { role: "user", content: `From: ${m.from}\nSubject: ${m.subject}\n\n${m.text.slice(0, 1500)}` },
       ],
-      max_tokens: 6,
-      chat_template_kwargs: { enable_thinking: false },
-    } as any);
+      6,
+    );
     const ch = res?.choices?.[0];
     const out = String(res?.response || ch?.message?.content || ch?.message?.reasoning_content || "").trim().toUpperCase();
     return out.startsWith("SPAM");
