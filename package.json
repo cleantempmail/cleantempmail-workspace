@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "node scripts/deploy.mjs",
+    "deploy:cf": "node scripts/deploy-cf.mjs",
     "update": "node scripts/deploy.mjs",
     "db:local": "wrangler d1 migrations apply DB --local",
     "typecheck": "tsc",
@@ -19,8 +20,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261021.1",
+    "cf": "^1.0.0-beta.32",
     "typescript": "^7.0.2",
-    "wrangler": "^4.151.3"
+    "wrangler": "^4.162.0"
   },
   "private": true,
   "cloudflare": {

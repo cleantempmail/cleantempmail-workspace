@@ -6,6 +6,10 @@ node_modules
 # 个人部署配置（自定义域名等）
 wrangler.local.jsonc
 .wrangler.deploy.json
+# npm run deploy:cf 临时生成的 cf 配置和构建输出
+/cloudflare.config.ts
+/wrangler.config.ts
+.cloudflare/
 
 .wrangler.*.jsonc
 .wrangler.test.json

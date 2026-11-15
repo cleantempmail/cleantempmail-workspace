@@ -71,7 +71,7 @@ By default the app is served at `https://cf-mailbox.<your-subdomain>.workers.dev
 cp wrangler.local.example.jsonc wrangler.local.jsonc
 ```
 
-Replace `mail.example.com` with your hostname (it must be on a zone in your account; Cloudflare creates the DNS record and certificate). This file isn't committed; `npm run deploy` applies it on top of `wrangler.jsonc`, so `git pull` never conflicts.
+Replace `mail.example.com` with your hostname (it must be on a zone in your account; Cloudflare creates the DNS record and certificate). This file isn't committed; `npm run deploy` (and `npm run deploy:cf`) applies it on top of `wrangler.jsonc`, so `git pull` never conflicts.
 
 You can also deploy on workers.dev first and add a custom domain later under the Worker's **Settings → Domains & Routes**.
 
@@ -83,6 +83,18 @@ npm run deploy         # first deploy: creates the databases and storage, deploy
 ```
 
 The deploy script picks the storage automatically: R2 if it's enabled on your account, otherwise [no-card mode](#no-card-mode). Force one with `STORAGE=lite npm run deploy` or `STORAGE=r2 npm run deploy`.
+
+**You can also deploy with Cloudflare's new `cf` CLI (beta)**, which does the same as `npm run deploy`:
+
+```bash
+npx cf auth login      # authorize cf in your browser (separate from the wrangler login)
+npm run deploy:cf      # check without deploying: npm run deploy:cf -- --dry-run
+```
+
+- Configuration still lives in `wrangler.jsonc` and `wrangler.local.jsonc`. The script generates the `cloudflare.config.ts` that cf needs for the deploy and deletes it afterwards
+- cf works with resource IDs: database and KV IDs are read from the deployed Worker or looked up by name, and created if missing. Secrets already on the Worker (APP_SECRET, the OAuth client) are kept
+- A cf deploy applies the hostnames and the workers.dev setting from the configuration. If the Worker has a custom domain that the configuration doesn't list (for example one added in the dashboard), or the workers.dev setting differs, the script stops and prints what to put in `wrangler.local.jsonc`. To change them anyway, add `-- --allow-domain-changes`
+- With more than one account, pick one with `CLOUDFLARE_ACCOUNT_ID=<account ID> npm run deploy:cf`
 
 ### 4. Finish the first-run setup
 
@@ -161,6 +173,8 @@ git pull
 npm install
 npm run update    # migrates the database first, then deploys, so mail keeps flowing during the update
 ```
+
+If you deploy with cf, run `npm run deploy:cf` as the last step instead.
 
 See [CHANGELOG.md](CHANGELOG.md) for what changed (in Chinese).
 
