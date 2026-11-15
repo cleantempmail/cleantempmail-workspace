@@ -190,7 +190,7 @@ Limits to know:
 - **Cloudflare sending fails**: usually the account doesn't have Workers Paid. Switch to Resend, or set Resend as the backup
 - **Resend says the domain slots are full**: the free plan allows 3 domains. Free one up (see step 7) or upgrade your Resend plan. With many domains, Workers Paid with Cloudflare sending is simpler: 3,000 emails/month included and no limit on the number of domains
 - **No address after deploying**: check the "访问地址" (address) line at the end of the build log. If it's missing, open the Worker in the dashboard → **Settings → Domains & Routes** and enable workers.dev or add a custom domain
-- **AI features unavailable**: summaries, translation and reply drafts use Workers AI, which has a daily free allowance
+- **AI features unavailable**: summaries, translation and reply drafts use Workers AI, which has a daily free allowance. Workers Paid accounts use DeepSeek V4.1 Flash; free accounts can't use that model and switch to Gemma 4 26B automatically
 - **How do I know if incoming mail had problems**: **Settings → System status** lists recent delivery problems (the original of every failed message is saved and can be downloaded) and today's D1 / Workers usage against the free plan (the token needs "Account Analytics · Read"). Admins get a notice when they open the app if something went wrong or the quota is nearly used up
 - **Large mail on the free plan**: the free plan allows 10 ms of CPU per request, so a message with very large attachments may not finish processing. It still shows up in the inbox with the original saved — download it from the "More" menu
 - **Moving from Gmail or elsewhere**: **Settings → Data → Import mail** accepts mbox (Google Takeout, Thunderbird, Apple Mail) and .eml. The free plan imports roughly 3,000 messages a day; it pauses when the quota runs out, and importing the same file the next day skips what's already there
@@ -203,7 +203,7 @@ Limits to know:
 | Receiving (Email Routing + Worker) | ✅ (very large messages may exceed CPU limits; the raw message is still kept) | ✅ |
 | Cloudflare Email Sending to any recipient | ❌ | ✅ (beta; new accounts start with a low daily quota) |
 | Sending through Resend | ✅ | ✅ |
-| Workers AI | Daily free allowance | Daily free allowance + pay as you go |
+| Workers AI | Daily free allowance (Gemma 4 26B) | Daily free allowance + pay as you go (DeepSeek V4.1 Flash) |
 
 Limits: 50 recipients per message; outgoing size 5 MiB with Cloudflare / 20 MiB with Resend; incoming up to 25 MiB.
 

@@ -1,9 +1,9 @@
 // 工作台功能：地址管理、屏蔽名单、规则、标签、团队成员、推送、AI、导出、存储、投递状态
 import { Hono } from "hono";
+import { runChat } from "../ai";
 import { cfClient, requireAdmin, sendSystemMail, sessionTokenScope, workerAccountId } from "../auth";
 import { cfApiBase, type Cf } from "../cf";
 import type { AppEnv, Env } from "../env";
-import { AI_MODEL } from "../filters";
 import type { StoredBody } from "../mail";
 import { vapidPublicKey } from "../push";
 import { canUseAddress, messageScopeSql, parseScope } from "../scope";
@@ -207,16 +207,8 @@ async function aiText(env: Env, system: string, user: string, maxTokens = 800): 
 }
 
 function runAi(env: Env, system: string, user: string, maxTokens: number): Promise<any> {
-  return env.AI!.run(AI_MODEL as any, {
-    messages: [
-      { role: "system", content: system + " /no_think" },
-      { role: "user", content: user },
-    ],
-    max_tokens: maxTokens + 1200,
-    // 关闭推理过程（GLM / Qwen 等推理模型会先"思考"，占用输出额度）
-    chat_template_kwargs: { enable_thinking: false },
-    reasoning_effort: "low",
-  } as any);
+  // 已经关闭推理；多留一些输出额度，万一模型仍然先输出思考过程，正文也不会被截断
+  return runChat(env, [{ role: "system", content: system }, { role: "user", content: user }], maxTokens + 1200);
 }
 
 async function bodyText(env: Env, id: string): Promise<string> {
