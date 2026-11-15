@@ -125,7 +125,7 @@ npm install
 cp wrangler.local.example.jsonc wrangler.local.jsonc
 ```
 
-把里面的 `mail.example.com` 改成你的访问地址（必须是你账户里某个域名的子域名，Cloudflare 会自动创建 DNS 记录和证书）。这个文件不提交到 git，`npm run deploy` 时会自动覆盖 `wrangler.jsonc` 里的同名字段，以后 `git pull` 更新也不会冲突。
+把里面的 `mail.example.com` 改成你的访问地址（必须是你账户里某个域名的子域名，Cloudflare 会自动创建 DNS 记录和证书）。这个文件不提交到 git，`npm run deploy`（以及 `npm run deploy:cf`）时会自动覆盖 `wrangler.jsonc` 里的同名字段，以后 `git pull` 更新也不会冲突。
 
 也可以先用 workers.dev 地址部署，之后在控制台 Worker → **Settings → Domains & Routes** 添加自定义域名。
 
@@ -137,6 +137,18 @@ npm run deploy         # 首次部署：自动创建数据库和存储，部署 
 ```
 
 部署脚本会自动判断存储方式：账户开通了 R2 就用 R2，没开通就用[免绑卡模式](#免绑卡模式)，不需要改任何配置。也可以用 `STORAGE=lite npm run deploy` 或 `STORAGE=r2 npm run deploy` 强制指定。
+
+**也可以用 Cloudflare 新的 `cf` 命令行部署（Beta）**，效果和 `npm run deploy` 相同：
+
+```bash
+npx cf auth login      # 浏览器里授权 cf（和 wrangler 的登录是分开的）
+npm run deploy:cf      # 只检查不部署：npm run deploy:cf -- --dry-run
+```
+
+- 配置仍然写在 `wrangler.jsonc` 和 `wrangler.local.jsonc` 里，部署时临时生成 cf 需要的 `cloudflare.config.ts`，部署完自动删除
+- cf 只认资源 ID：数据库、KV 的 ID 从已部署的 Worker 上读取或按名称查找，找不到就创建；Worker 上已有的 Secret（APP_SECRET、OAuth 客户端）会保留
+- cf 部署会按配置设置访问域名和 workers.dev 开关。如果 Worker 上绑着配置里没有的自定义域名（例如在控制台里加的），或 workers.dev 开关和配置不一致，脚本会停下并给出要写进 `wrangler.local.jsonc` 的内容；确实要改，加上 `-- --allow-domain-changes`
+- 账户不止一个时，用 `CLOUDFLARE_ACCOUNT_ID=<账户 ID> npm run deploy:cf` 指定
 
 ### 第 4 步：完成首次设置
 
@@ -215,6 +227,8 @@ git pull
 npm install
 npm run update    # 先更新数据库结构，再部署新代码，更新过程中收发不中断
 ```
+
+用 cf 部署的，最后一步换成 `npm run deploy:cf`。
 
 版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -350,6 +364,7 @@ public/js/               前端（原生 ES 模块，无构建步骤）
 public/sw.js             Service Worker（推送通知）
 public/brand/            logo 与图标
 scripts/deploy.mjs       部署：自动选择存储方式、先迁移数据库再部署
+scripts/deploy-cf.mjs    用 cf 命令行部署（npm run deploy:cf）：从 wrangler 配置临时生成 cloudflare.config.ts
 scripts/lite-config.mjs  生成免绑卡版配置（.github/workflows/lite-branch.yml 用它维护 lite 分支）
 scripts/update-from-upstream.mjs  更新到最新版本（Actions 里的 Update from upstream 用它）
 tests/                   自动化测试（npm test）
