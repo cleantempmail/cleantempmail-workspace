@@ -102,7 +102,7 @@ export function createEditor({ html = "", placeholder = "", onChange, onFiles })
   const area = wrap.querySelector(".editor-area");
   area.innerHTML = sanitizeHtml(html);
   const changed = () => {
-    area.classList.toggle("empty", !area.textContent.trim() && !area.querySelector("img"));
+    area.classList.toggle("is-empty", !area.textContent.trim() && !area.querySelector("img"));
     onChange?.();
   };
   changed();
