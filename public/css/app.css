@@ -556,7 +556,7 @@ code { font: 12.5px var(--mono); background: var(--hover); padding: 1px 6px; bor
 .tb-btn .i { width: 16px; height: 16px; }
 .tb-sep { width: 1px; height: 18px; background: var(--line); margin: 0 5px; }
 .editor-area { flex: 1; padding: 14px 18px; outline: none; overflow-y: auto; line-height: 1.65; font-size: 14.5px; word-break: break-word; min-height: 160px; }
-.editor-area.empty::before { content: attr(data-placeholder); color: var(--faint); position: absolute; pointer-events: none; }
+.editor-area.is-empty::before { content: attr(data-placeholder); color: var(--faint); position: absolute; pointer-events: none; }
 .editor-area p { margin: 0 0 .5em; }
 .editor-area blockquote { margin: 6px 0; padding-left: 12px; border-left: 3px solid var(--line-strong); color: var(--muted); }
 .editor-area .signature { color: var(--muted); margin-top: 8px; }
